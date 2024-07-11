@@ -83,7 +83,11 @@ namespace Antmicro.Renode.Peripherals.CAN
             byte[] frame;
             try
             {
-                frame = message.ToSocketCAN(true);
+                // TODO for tx, I have to set useNetworkByteOrder=false
+                // https://github.com/renode/renode/issues/641
+                frame = message.ToSocketCAN(false); 
+                //frame = message.ToSocketCAN(true);
+                // TODO why useNetworkByteOrder=true
             }
             catch(RecoverableException e)
             {

@@ -772,10 +772,17 @@ namespace Antmicro.Renode.Peripherals.CAN
             var messageBufferOffset = matchedItem.Entry.Offset;
             var messageBufferIndex = matchedItem.Index;
 
-            this.Log(LogLevel.Debug, "Found matching message buffer#{0}: {1}", messageBufferIndex, messageBuffer);
+            this.Log(LogLevel.Debug, "Frame: {0}", frame);
+            this.Log(LogLevel.Debug, "Found matching message buffer#{0} (offset {1}): {2}", messageBufferIndex, messageBufferOffset, messageBuffer);
 
             messageBuffer.FillReceivedFrame(messageBuffers, messageBufferOffset, frame);
             messageBufferInterrupt[messageBufferIndex].Value = true;
+
+            this.Log(LogLevel.Debug, "AFTER buffer#{0} (offset {1}): {2}", messageBufferIndex, messageBufferOffset, messageBuffer);
+            // TODO this should happen in the 
+            // WithChangeCallback handlers in
+            // RegisterMessageBufferInterruptFlags ?
+            UpdateInterrupts();
 
             return true;
         }

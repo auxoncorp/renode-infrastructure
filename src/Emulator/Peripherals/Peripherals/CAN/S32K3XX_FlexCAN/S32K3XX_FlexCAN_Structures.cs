@@ -190,8 +190,25 @@ namespace Antmicro.Renode.Peripherals.CAN
             {
                 Data = frame.Data;
                 messageBufferCode = RxMessageCode != RxCode.Empty ? (byte)RxMessageBufferCode.Overrun : (byte)RxMessageBufferCode.Full;
+                
+                // TODO still need to manage Overrun vs Full/empty?
+
+                // TODO
+                //remoteFrame = frame.RemoteFrame;
+                //extendedFrame = frame.ExtendedFormat;
+                //identifierAcceptanceFilterHitIndicator = (ushort)filterIndex;
+                if(frame.ExtendedFormat)
+                {
+                    extendedId = frame.Id;
+                }
+                else
+                {
+                    standardId = frame.Id;
+                }
 
                 var dataToBeWritten = Packet.Encode<MessageBufferStructure>(this);
+                // TODO
+                Logger.Log(LogLevel.Debug, "PACKET: [{0:X}]", BitConverter.ToString(dataToBeWritten));
                 buffer.WriteBytes((long)offset, dataToBeWritten, 0, (int)MetaSize);
                 buffer.WriteBytes((long)offset + MetaSize, data, 0, (int)data.Length);
             }
