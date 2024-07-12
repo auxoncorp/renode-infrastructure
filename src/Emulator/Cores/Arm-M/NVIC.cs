@@ -575,6 +575,9 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
                 .WithTaggedFlag("RA (Read Allocation Support)", 29)
                 .WithTaggedFlag("WB (Write Back Support)", 30)
                 .WithTaggedFlag("WT (Write Through Support)", 31);
+
+            Registers.DebugExceptionAndMonitorControl.Define(RegisterCollection)
+                .WithFlag(24, name: "TRCENA", valueProviderCallback: _ => true);
         }
 
         private void DefineTightlyCoupledMemoryControlRegisters()
@@ -1099,6 +1102,7 @@ namespace Antmicro.Renode.Peripherals.IRQControllers
             Alias2OfMPURegionAttributeAndSize = 0xDB0, // MPU_RASR_A2
             Alias3OfMPURegionBaseAddress = 0xDB4, // MPU_RBAR_A3
             Alias3OfMPURegionAttributeAndSize = 0xDB8, // MPU_RASR_A3
+            DebugExceptionAndMonitorControl = 0xDFC, // DEMCR
             SoftwareTriggerInterrupt = 0xF00, // STIR
             FPContextControl = 0xF34, // FPCCR
             FPContextAddress = 0xF38, // FPCAR
