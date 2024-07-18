@@ -148,7 +148,7 @@ namespace Antmicro.Renode.Peripherals.CAN
                 .WithReservedBits(7, 1)
                 .WithEnumField(8, 2, out legacyFilterFormat, name: "ID Acceptance Mode (MCR.IDAM)")
                 .WithReservedBits(10, 1)
-                .WithTaggedFlag("CAN FD Operation Enable (MCR.FDEN)", 11)
+                .WithFlag(11, name: "CAN FD Operation Enable (MCR.FDEN)", valueProviderCallback: _ => true)
                 .WithFlag(12, out abortEnable, name: "Abort Enable (MCR.AEN)",
                     changeCallback: GetFreezeModeOnlyWritableChangeCallback(abortEnable, "MCR.AEN"))
                 .WithTaggedFlag("Local Priority Enable (MCR.LPRIOEN)", 13)
