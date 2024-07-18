@@ -191,15 +191,15 @@ namespace Antmicro.Renode.Peripherals.CAN
                 Data = frame.Data;
                 messageBufferCode = RxMessageCode != RxCode.Empty ? (byte)RxMessageBufferCode.Overrun : (byte)RxMessageBufferCode.Full;
                 
-                // TODO still need to manage Overrun vs Full/empty?
-
                 // TODO
+                // need to manage Overrun/Full/Empty codes
                 //remoteFrame = frame.RemoteFrame;
                 //extendedFrame = frame.ExtendedFormat;
                 //identifierAcceptanceFilterHitIndicator = (ushort)filterIndex;
                 if(frame.ExtendedFormat)
                 {
-                    extendedId = frame.Id;
+                    extendedId = frame.Id & 0x3FFFF;
+                    standardId = (frame.Id >> 18) & 0x7FF;
                 }
                 else
                 {
@@ -207,8 +207,6 @@ namespace Antmicro.Renode.Peripherals.CAN
                 }
 
                 var dataToBeWritten = Packet.Encode<MessageBufferStructure>(this);
-                // TODO
-                Logger.Log(LogLevel.Debug, "PACKET: [{0:X}]", BitConverter.ToString(dataToBeWritten));
                 buffer.WriteBytes((long)offset, dataToBeWritten, 0, (int)MetaSize);
                 buffer.WriteBytes((long)offset + MetaSize, data, 0, (int)data.Length);
             }
@@ -312,7 +310,9 @@ namespace Antmicro.Renode.Peripherals.CAN
                 (RxMessageBufferCode)messageBufferCode == RxMessageBufferCode.Full ||
                 (RxMessageBufferCode)messageBufferCode == RxMessageBufferCode.Overrun;
 
-            public uint ExtendedId => standardId | extendedId << 11;
+            // TODO
+            //public uint ExtendedId => standardId | extendedId << 11;
+            public uint ExtendedId => (standardId << 18) | extendedId;
             public uint StandardId => standardId;
 
             public uint Id => idExtendedBit ? ExtendedId : StandardId;
