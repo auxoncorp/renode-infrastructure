@@ -75,7 +75,7 @@ namespace Antmicro.Renode.Utilities
                     //that's the simplest way to create and NOT have the file open
                 }
             }
-            catch(Exception)
+            catch (Exception e)
             {
                 Logger.Log(LogLevel.Error, $"Failed to create temp file at path {path}: {e}");
                 path = null;
