@@ -62,6 +62,7 @@ namespace Antmicro.Renode.Utilities
             // check if the file exists, since File.Create would override the file
             if(File.Exists(path))
             {
+                Logger.Log(LogLevel.Error, $"Temp file already exists at path {path}");
                 path = null;
                 return false;
             }
@@ -75,6 +76,7 @@ namespace Antmicro.Renode.Utilities
             }
             catch(Exception)
             {
+                Logger.Log(LogLevel.Error, $"Failed to create temp file at path {path}: {e}");
                 path = null;
                 return false;
             }
