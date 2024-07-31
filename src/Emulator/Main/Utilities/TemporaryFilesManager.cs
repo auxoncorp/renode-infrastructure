@@ -10,6 +10,7 @@ using System.IO;
 using System.Linq;
 using System.Diagnostics;
 using Antmicro.Renode.Core;
+using Antmicro.Renode.Logging;
 
 namespace Antmicro.Renode.Utilities
 {
