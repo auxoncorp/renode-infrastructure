@@ -22,6 +22,7 @@ namespace Antmicro.Renode.Peripherals.Network
         private static readonly EtherType[] checksumOffloadEngineIpHeaderTypes =
         {
             EtherType.IpV4,
+            EtherType.IpV6,
         };
 
         private static readonly IPProtocolType[] checksumOffloadEnginePseudoHeaderTypes =
@@ -29,6 +30,7 @@ namespace Antmicro.Renode.Peripherals.Network
             IPProtocolType.TCP,
             IPProtocolType.UDP,
             IPProtocolType.ICMP,
+            IPProtocolType.ICMPV6,
         };
 
         private class FrameAssembler
@@ -163,7 +165,7 @@ namespace Antmicro.Renode.Peripherals.Network
 
             private void FinalizeSegment(IEnumerable<byte> frame, uint length, bool isLast = false)
             {
-                if(TryCreateEthernetFrame(tcpHeader?.Concat(frame) ?? frame, length + (uint?)tcpHeader?.Length ?? 0, out var builtFrame, isLast))
+                if(TryCreateEthernetFrame(tcpHeader?.Concat(frame) ?? frame, length + ((uint?)tcpHeader?.Length ?? 0), out var builtFrame, isLast))
                 {
                     frameReady(builtFrame);
                     packetsFinalized += 1;
