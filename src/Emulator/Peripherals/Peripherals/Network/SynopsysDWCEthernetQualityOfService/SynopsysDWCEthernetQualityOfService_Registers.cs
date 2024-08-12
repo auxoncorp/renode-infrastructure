@@ -1252,14 +1252,31 @@ namespace Antmicro.Renode.Peripherals.Network
                 case MIIOperation.Read:
                     if(clause45PhyEnable.Value)
                     {
+                        // TODO - need to support Clause45Address constructor in repl files
+                        /*
                         if(!TryGetPhy<Clause45Address, ushort>((uint)miiPhy.Value, out var phy))
                         {
+                            this.Log(LogLevel.Debug, "miiAddress.Value 0x{0:X}", miiAddress.Value);
                             this.Log(LogLevel.Debug, "Read access to unknown phy {0} via Clause 45.", miiPhy.Value);
                             break;
                         }
                         var c45Address = new Clause45Address((byte)miiRegisterOrDeviceAddress.Value, (ushort)miiAddress.Value);
                         miiData.Value = phy.Read(c45Address);
                         this.Log(LogLevel.Noisy, "Read ({1}, 0x{2:X}) access to phy {0} via Clause 45.", miiPhy.Value, c45Address, miiData.Value);
+                        */
+
+                        if(miiRegisterOrDeviceAddress.Value != 1)
+                        {
+                            throw new InvalidOperationException("Invalid MMD address.");
+                        }
+
+                        if(!TryGetPhy<ushort>((uint)miiPhy.Value, out var phy))
+                        {
+                            this.Log(LogLevel.Debug, "Read access to unknown phy {0} via Clause 45.", miiPhy.Value);
+                            break;
+                        }
+                        miiData.Value = phy.Read((ushort)miiAddress.Value);
+                        this.Log(LogLevel.Noisy, "Read ({1}, 0x{2:X}) access to phy {0} via Clause 45.", miiPhy.Value, miiAddress.Value, miiData.Value);
                     }
                     else
                     {
@@ -1275,6 +1292,8 @@ namespace Antmicro.Renode.Peripherals.Network
                 case MIIOperation.Write:
                     if(clause45PhyEnable.Value)
                     {
+                        // TODO - need to support Clause45Address constructor in repl files
+                        /*
                         if(!TryGetPhy<Clause45Address, ushort>((uint)miiPhy.Value, out var phy))
                         {
                             this.Log(LogLevel.Debug, "Write access to unknown phy {0} via Clause 45.", miiPhy.Value);
@@ -1283,6 +1302,20 @@ namespace Antmicro.Renode.Peripherals.Network
                         var c45Address = new Clause45Address((byte)miiRegisterOrDeviceAddress.Value, (ushort)miiAddress.Value);
                         this.Log(LogLevel.Noisy, "Write ({1}, 0x{2:X}) access to phy {0} via Clause 45.", miiPhy.Value, c45Address, miiData.Value);
                         phy.Write(c45Address, (ushort)miiData.Value);
+                        */
+
+                        if(miiRegisterOrDeviceAddress.Value != 1)
+                        {
+                            throw new InvalidOperationException("Invalid MMD address.");
+                        }
+
+                        if(!TryGetPhy<ushort>((uint)miiPhy.Value, out var phy))
+                        {
+                            this.Log(LogLevel.Debug, "Write access to unknown phy {0} via Clause 45.", miiPhy.Value);
+                            break;
+                        }
+                        this.Log(LogLevel.Noisy, "Write ({1}, 0x{2:X}) access to phy {0} via Clause 45.", miiPhy.Value, miiAddress.Value, miiData.Value);
+                        phy.Write((ushort)miiAddress.Value, (ushort)miiData.Value);
                     }
                     else
                     {
