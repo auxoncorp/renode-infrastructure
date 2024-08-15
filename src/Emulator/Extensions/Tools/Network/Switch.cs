@@ -128,6 +128,34 @@ namespace Antmicro.Renode.Tools.Network
             started = true;
         }
 
+        public void SetInterfaceDelay(IMACInterface iface, ulong delayMs)
+        {
+            lock(innerLock)
+            {
+                var descriptor = ifaces.SingleOrDefault(x => x.Interface == iface);
+                if(descriptor == null)
+                {
+                    throw new RecoverableException("The interface is not registered, you must connect it in order to change delay settings");
+                }
+                descriptor.delay = TimeInterval.FromMilliseconds(delayMs);
+                this.Log(LogLevel.Info, "Delay {0} set for interace {1}", descriptor.delay, iface.MAC);
+            }
+        }
+
+        public void SetInterfaceMacDelay(MACAddress mac, ulong delayMs)
+        {
+            lock(innerLock)
+            {
+                var descriptor = ifaces.SingleOrDefault(x => x.Interface.MAC == mac);
+                if(descriptor == null)
+                {
+                    throw new RecoverableException("The interface is not registered, you must connect it in order to change delay settings");
+                }
+                descriptor.delay = TimeInterval.FromMilliseconds(delayMs);
+                this.Log(LogLevel.Info, "Delay {0} set for interace {1}", descriptor.delay, mac);
+            }
+        }
+
         public event Action<IExternal, IMACInterface, IMACInterface, byte[]> FrameTransmitted;
         public event Action<IExternal, IMACInterface, byte[]> FrameProcessed;
 
@@ -163,10 +191,22 @@ namespace Antmicro.Renode.Tools.Network
                         continue;
                     }
 
-                    iface.Machine.HandleTimeDomainEvent(iface.Interface.ReceiveFrame, frame.Clone(), vts, () =>
+                    if(iface.delay.Ticks == 0)
                     {
-                        FrameTransmitted?.Invoke(this, sender, iface.Interface, frame.Bytes);
-                    });
+                        iface.Machine.HandleTimeDomainEvent(iface.Interface.ReceiveFrame, frame.Clone(), vts, () =>
+                        {
+                            FrameTransmitted?.Invoke(this, sender, iface.Interface, frame.Bytes);
+                        });
+                    }
+                    else
+                    {
+                        iface.Machine.ScheduleAction(iface.delay, _ => {
+                            iface.Machine.HandleTimeDomainEvent(iface.Interface.ReceiveFrame, frame.Clone(), vts, () =>
+                            {
+                                FrameTransmitted?.Invoke(this, sender, iface.Interface, frame.Bytes);
+                            });
+                        });
+                    }
                 }
             }
 
@@ -189,6 +229,7 @@ namespace Antmicro.Renode.Tools.Network
             public IMACInterface Interface;
             public bool PromiscuousMode;
             public Action<EthernetFrame> Delegate;
+            public TimeInterval delay;
 
             public override int GetHashCode()
             {
