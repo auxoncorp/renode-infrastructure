@@ -156,6 +156,20 @@ namespace Antmicro.Renode.Tools.Network
             }
         }
 
+        public void SetInterfaceMacCorrupt(MACAddress mac, bool corrupt)
+        {
+            lock(innerLock)
+            {
+                var descriptor = ifaces.SingleOrDefault(x => x.Interface.MAC == mac);
+                if(descriptor == null)
+                {
+                    throw new RecoverableException("The interface is not registered, you must connect it in order to change corruption settings");
+                }
+                descriptor.corrupt = corrupt;
+                this.Log(LogLevel.Info, "Corruption {0} set for interace {1}", descriptor.corrupt, mac);
+            }
+        }
+
         public event Action<IExternal, IMACInterface, IMACInterface, byte[]> FrameTransmitted;
         public event Action<IExternal, IMACInterface, byte[]> FrameProcessed;
 
@@ -191,6 +205,12 @@ namespace Antmicro.Renode.Tools.Network
                         continue;
                     }
 
+                    if(iface.corrupt)
+                    {
+                        this.Log(LogLevel.Noisy, "Dropping frame due to corruption");
+                        continue;
+                    }
+
                     if(iface.delay.Ticks == 0)
                     {
                         iface.Machine.HandleTimeDomainEvent(iface.Interface.ReceiveFrame, frame.Clone(), vts, () =>
@@ -200,6 +220,7 @@ namespace Antmicro.Renode.Tools.Network
                     }
                     else
                     {
+                        this.Log(LogLevel.Noisy, "Delaying frame reception by {0}", iface.delay);
                         iface.Machine.ScheduleAction(iface.delay, _ => {
                             iface.Machine.HandleTimeDomainEvent(iface.Interface.ReceiveFrame, frame.Clone(), vts, () =>
                             {
@@ -230,6 +251,7 @@ namespace Antmicro.Renode.Tools.Network
             public bool PromiscuousMode;
             public Action<EthernetFrame> Delegate;
             public TimeInterval delay;
+            public bool corrupt;
 
             public override int GetHashCode()
             {
