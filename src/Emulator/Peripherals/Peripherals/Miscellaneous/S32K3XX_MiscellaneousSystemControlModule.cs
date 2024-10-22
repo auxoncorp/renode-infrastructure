@@ -15,14 +15,24 @@ using Antmicro.Renode.Peripherals.Bus;
 namespace Antmicro.Renode.Peripherals.Miscellaneous
 {
     public class S32K3XX_MiscellaneousSystemControlModule : BasicDoubleWordPeripheral, IWordPeripheral, IKnownSize,
-        IProvidesRegisterCollection<WordRegisterCollection>
+        IProvidesRegisterCollection<WordRegisterCollection>, INumberedGPIOOutput, IGPIOReceiver
 
     {
         public S32K3XX_MiscellaneousSystemControlModule(IMachine machine) : base(machine)
         {
+            this.machine = machine;
+
+            platformIrqDestinations = new PlatformIrqDestination[ProcessorCount * InterruptRouterSharedRegisterCount];
+            platformIrqRoutingTable = new bool[ProcessorCount * InterruptRouterSharedRegisterCount];
+            // Each core/nvic has 240 IRQs that are expected to be mapped in the repl file
+            // otherwise we'd need to have references to each core here
+            Connections = new IGPIORedirector((int) (ProcessorCount * InterruptRouterSharedRegisterCount), HandleIRQConnect, HandleIRQDisconnect);
+
             wordRegisterCollection = new WordRegisterCollection(this);
             DefineRegisters();
         }
+
+        public IReadOnlyDictionary<int, IGPIO> Connections { get; private set; }
 
         public ushort ReadWord(long offset)
         {
@@ -38,6 +48,46 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
         {
             base.Reset();
             wordRegisterCollection.Reset();
+
+            Array.Clear(platformIrqRoutingTable, 0, platformIrqRoutingTable.Length);
+        }
+
+        private void HandleIRQConnect(int sourceNumber, IGPIOReceiver destination, int destinationNumber)
+        {
+            var coreId = sourceNumber / InterruptRouterSharedRegisterCount;
+            var coreLocalsrcNumber = sourceNumber - (coreId * InterruptRouterSharedRegisterCount);
+            this.Log(LogLevel.Debug, "Routing platform IRQ core={0} src={1} dst={1}", coreId, coreLocalsrcNumber, destinationNumber);
+
+            lock(platformIrqRoutingTable)
+            {
+                platformIrqDestinations[sourceNumber] = new PlatformIrqDestination(destination, destinationNumber);
+            }
+        }
+
+        private void HandleIRQDisconnect(int sourceNumber)
+        {
+            this.Log(LogLevel.Debug, "HandleIRQDisconnect src={0}", sourceNumber);
+            lock(platformIrqRoutingTable)
+            {
+                platformIrqDestinations[sourceNumber] = new PlatformIrqDestination();
+            }
+        }
+
+        public void OnGPIO(int number, bool value)
+        {
+            this.Log(LogLevel.Debug, "OnGPIO num={0}, val={1}", number, value);
+            lock(platformIrqRoutingTable)
+            {
+                for(var coreId = 0; coreId < ProcessorCount; coreId++)
+                {
+                    var tableIndex = (coreId * InterruptRouterSharedRegisterCount) + number;
+                    if(platformIrqRoutingTable[tableIndex])
+                    {
+                        this.Log(LogLevel.Debug, "OnGPIO core={0}, tableIdx={1}", coreId, tableIndex);
+                        platformIrqDestinations[tableIndex].OnGPIO(value);
+                    }
+                }
+            }
         }
 
         public long Size => 0x4000;
@@ -57,9 +107,21 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             );
             Registers.ProcessorXNumber.DefineMany(asDoubleWordCollection, ProcessorConfigurationCount, stepInBytes: processorConfigurationSize, setup: (reg, index) =>
                 {
-                    var numberSize = index == 0 ? 3 : 2;
-                    reg.WithReservedBits(numberSize, 32 - numberSize)
-                        .WithTag("ProcessorNumber", 0, numberSize);
+                    if(index == 0)
+                    {
+                        // CPXNUM
+                        reg.WithReservedBits(2, 30)
+                            .WithValueField(0, 2, FieldMode.Read, name: "ProcessorNumber", valueProviderCallback: _ =>
+                                {
+                                    var cpuId = (ulong) machine.SystemBus.GetCPUId(machine.SystemBus.GetCurrentCPU());
+                                    return cpuId;
+                                });
+                    }
+                    else
+                    {
+                        reg.WithReservedBits(2, 30)
+                            .WithValueField(0, 2, FieldMode.Read, name: "ProcessorNumber", valueProviderCallback: _ => (ulong) index);
+                    }
                 }
             );
             Registers.ProcessorXRevision.DefineMany(asDoubleWordCollection, ProcessorConfigurationCount, stepInBytes: processorConfigurationSize, setup: (reg, index) => reg
@@ -203,19 +265,70 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             Registers.InterruptRouterSharedPeripheralRoutingControl0.DefineMany(asWordCollection, InterruptRouterSharedRegisterCount, (reg, index) => reg
                 .WithTaggedFlag("Lock", 15)
                 .WithReservedBits(4, 9)
-                .WithTaggedFlag("EnableCortex-M7_3InterruptSteering", 3)
-                .WithTaggedFlag("EnableCortex-M7_2InterruptSteering", 2)
-                .WithTaggedFlag("EnableCortex-M7_1InterruptSteering", 1)
-                .WithTaggedFlag("EnableCortex-M7_0InterruptSteering", 0)
+                .WithFlag(3,
+                    name: "EnableCortex-M7_3InterruptSteering",
+                    writeCallback: (_, value) => setSteeringInterrupt(3, index, value),
+                    valueProviderCallback: _ => getSteeringInterrupt(3, index))
+                .WithFlag(2,
+                    name: "EnableCortex-M7_2InterruptSteering",
+                    writeCallback: (_, value) => setSteeringInterrupt(2, index, value),
+                    valueProviderCallback: _ => getSteeringInterrupt(2, index))
+                .WithFlag(1,
+                    name: "EnableCortex-M7_1InterruptSteering",
+                    writeCallback: (_, value) => setSteeringInterrupt(1, index, value),
+                    valueProviderCallback: _ => getSteeringInterrupt(1, index))
+                .WithFlag(0,
+                    name: "EnableCortex-M7_0InterruptSteering",
+                    writeCallback: (_, value) => setSteeringInterrupt(0, index, value),
+                    valueProviderCallback: _ => getSteeringInterrupt(0, index))
             );
         }
 
+        private bool getSteeringInterrupt(uint coreId, int regIndex)
+        {
+            var tableIndex = (coreId * InterruptRouterSharedRegisterCount) + regIndex;
+            lock(platformIrqRoutingTable)
+            {
+                return platformIrqRoutingTable[tableIndex];
+            }
+        }
+
+        private void setSteeringInterrupt(uint coreId, int regIndex, bool enable)
+        {
+            var tableIndex = (coreId * InterruptRouterSharedRegisterCount) + regIndex;
+            this.Log(LogLevel.Debug, "Platform interrupt offset {0} routed to CPU{1} {2}", regIndex, coreId, enable ? "enabled" : "disabled");
+            lock(platformIrqRoutingTable)
+            {
+                platformIrqRoutingTable[tableIndex] = enable;
+            }
+        }
+
         private WordRegisterCollection wordRegisterCollection;
+        private IMachine machine;
+        private PlatformIrqDestination[] platformIrqDestinations;
+        private readonly bool[] platformIrqRoutingTable;
 
         private const uint ProcessorCount = 4;
         private const uint ProcessorConfigurationCount = ProcessorCount + 1;
         private const uint InterruptRouterRegisterCount = ProcessorCount * 4;
         private const uint InterruptRouterSharedRegisterCount = 240;
+
+        private struct PlatformIrqDestination
+        {
+            public PlatformIrqDestination(IGPIOReceiver receiver, int destinationNo)
+            {
+                this.receiver = receiver;
+                this.destinationNo = destinationNo;
+            }
+
+            public void OnGPIO(bool state)
+            {
+                receiver.OnGPIO(destinationNo, state);
+            }
+
+            public readonly IGPIOReceiver receiver;
+            public readonly int destinationNo;
+        }
 
         public enum Registers
         {

@@ -382,6 +382,7 @@
     <Compile Include="Peripherals\Analog\STM32WBA_ADC.cs" />
     <Compile Include="Peripherals\Analog\Xilinx_XADC.cs" />
     <Compile Include="Peripherals\Analog\STM32_ADC.cs" />
+    <Compile Include="Peripherals\Analog\S32K3XX_ADC.cs" />
     <Compile Include="Peripherals\Analog\RenesasDA14_GPADC.cs" />
     <Compile Include="Peripherals\DMA\EOSS3_SPI_DMA.cs" />
     <Compile Include="Peripherals\Miscellaneous\EOSS3_PacketFIFO.cs" />
@@ -488,6 +489,7 @@
     <Compile Include="Peripherals\Analog\ADCChannel.cs" />
     <Compile Include="Peripherals\MemoryControllers\OpenTitan_ROMController.cs" />
     <Compile Include="Peripherals\MemoryControllers\OpenTitan_SRAMController.cs" />
+    <Compile Include="Peripherals\MemoryControllers\S32K3XX_FlashMemoryController.cs" />
     <Compile Include="Peripherals\CPU\ExecutionTracer\ExecutionTracer.cs" />
     <Compile Include="Peripherals\CPU\ExecutionTracer\TraceWriter.cs" />
     <Compile Include="Peripherals\CPU\ExecutionTracer\TraceBinaryWriter.cs" />
@@ -583,11 +585,14 @@
     <Compile Include="Peripherals\CRC\STM32F0_CRC.cs" />
     <Compile Include="Peripherals\CRC\STM32WBA_CRC.cs" />
     <Compile Include="Peripherals\CRC\STM32F4_CRC.cs" />
+    <Compile Include="Peripherals\CRC\S32K3XX_CRC.cs" />
     <Compile Include="Peripherals\MTD\STM32L0_FlashController.cs" />
     <Compile Include="Peripherals\MTD\STM32_FlashController.cs" />
     <Compile Include="Peripherals\MTD\STM32H7_FlashController.cs" />
     <Compile Include="Peripherals\MTD\STM32F4_FlashController.cs" />
     <Compile Include="Peripherals\MTD\STM32WBA_FlashController.cs" />
+    <Compile Include="Peripherals\MTD\C40ASFFlash.cs" />
+    <Compile Include="Peripherals\SPI\IMXRT_FlexSPI.cs" />
     <Compile Include="Peripherals\Miscellaneous\NRF52840_EGU.cs" />
     <Compile Include="Peripherals\Timers\AmbiqApollo4_Timer.cs" />
     <Compile Include="Peripherals\Miscellaneous\STM32H7_RCC.cs" />

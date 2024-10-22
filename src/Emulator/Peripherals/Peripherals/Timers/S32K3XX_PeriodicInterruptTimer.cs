@@ -122,7 +122,15 @@ namespace Antmicro.Renode.Peripherals.Timers
                     })
                 .WithFlag(0, name: "TimerEnable",
                     valueProviderCallback: _ => clockChannel.Enabled,
-                    changeCallback: (_, value) => clockChannel.Enabled = value)
+                    changeCallback: (_, value) => 
+                    {
+                        clockChannel.Enabled = value;
+                        if(value)
+                        {
+                            // TODO Flag0 needs to be set, even if interrupts are not enabled
+                            clockChannel.InterruptEnable = true;
+                        }
+                    })
             ;
 
             if(chainedTo != null)
