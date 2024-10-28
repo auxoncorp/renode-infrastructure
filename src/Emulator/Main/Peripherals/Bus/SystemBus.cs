@@ -655,7 +655,9 @@ namespace Antmicro.Renode.Peripherals.Bus
             this.DebugLog("Loading ELF {0}.", fileName);
             using(var elf = GetELFFromFile(fileName))
             {
-                var segmentsToLoad = elf.Segments.Where(x => x.Type == SegmentType.Load);
+                // NOTE: see https://github.com/renode/renode/issues/315
+                // Added x.GetSegmentFileSize() > 0 to skip zero size segments that should not be loaded
+                var segmentsToLoad = elf.Segments.Where(x => x.Type == SegmentType.Load && x.GetSegmentFileSize() > 0);
                 if(!segmentsToLoad.Any())
                 {
                     throw new RecoverableException($"ELF '{fileName}' has no loadable segments.");
@@ -670,6 +672,7 @@ namespace Antmicro.Renode.Peripherals.Bus
                         s.GetSegmentSize(),
                         loadAddress
                     );
+
                     this.WriteBytes(contents, loadAddress, allowLoadsOnlyToMemory, cpu);
                     UpdateLowestLoadedAddress(loadAddress);
                     this.DebugLog("Segment loaded.");

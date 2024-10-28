@@ -83,6 +83,20 @@ namespace Antmicro.Renode.Peripherals.Bus
             throw new ArgumentException(ExceptionMessage);
         }
 
+        public static long GetSegmentFileSize(this ISegment segment)
+        {
+            if(segment is Segment<uint> segment32)
+            {
+                return segment32.FileSize;
+            }
+            if(segment is Segment<ulong> segment64)
+            {
+                return segment64.FileSize;
+            }
+
+            throw new ArgumentException(ExceptionMessage);
+        }
+
         public static ulong GetSectionPhysicalAddress(this ISection section)
         {
             if(section is Section<uint> section32)
