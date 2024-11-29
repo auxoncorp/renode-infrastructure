@@ -29,9 +29,13 @@ namespace Antmicro.Renode.Peripherals.Analog
         {
             precisionChannels = Enumerable.Range(0, NumberOfPrecisionChannels).Select(x => new ADCChannel(this, x)).ToArray();
             standardChannels = Enumerable.Range(0, NumberOfStandardChannels).Select(x => new ADCChannel(this, x)).ToArray();
+
             // TODO only the precision channels are supported in the resd streams
             resdStream = new RESDStream<VoltageSample>[NumberOfPrecisionChannels];
             rawVoltage = Enumerable.Repeat(DefaultChannelVoltage, NumberOfPrecisionChannels).ToArray();
+
+            rng = EmulationManager.Instance.CurrentEmulation.RandomGenerator;
+            rngNoise = Enumerable.Repeat((uint) 0, NumberOfPrecisionChannels).ToArray();
 
             DefineRegisters();
         }
@@ -81,6 +85,18 @@ namespace Antmicro.Renode.Peripherals.Analog
             return rawVoltage[adcChannel] * VoltageSampleDivisor;
         }
 
+        public void EnableRandomNoise(int adcChannel, uint microvolts)
+        {
+            EnsureChannelIsValid((uint)adcChannel);
+            rngNoise[adcChannel] = microvolts / VoltageSampleDivisor;
+        }
+
+        public void DisableRandomNoise(int adcChannel)
+        {
+            EnsureChannelIsValid((uint)adcChannel);
+            rngNoise[adcChannel] = 0;
+        }
+
         public long Size => 0x400;
 
         public GPIO IRQ { get; } = new GPIO();
@@ -104,6 +120,13 @@ namespace Antmicro.Renode.Peripherals.Analog
             else
             {
                 rawVoltage[channelId] = voltage;
+            }
+
+            if(rngNoise[channelId] != 0)
+            {
+                var noise = rng.Next(-((int) rngNoise[channelId]), (int) rngNoise[channelId]);
+                int new_voltage = ((int) voltage) + noise;
+                voltage = (uint) new_voltage.Clamp(0, (int) MaxVoltage);
             }
 
             if(voltage > MaxVoltage)
@@ -171,7 +194,7 @@ namespace Antmicro.Renode.Peripherals.Analog
                 .WithTaggedFlag("MODE", 29)
                 .WithTaggedFlag("WLSIDE", 30)
                 .WithTaggedFlag("OWREN", 31);
-            
+
             Registers.MainStatus.Define(this, 0x00000001, name: "MSR")
                 .WithEnumField<DoubleWordRegister, AdcState>(0, 3, out state, FieldMode.Read, name: "ADCSTATUS")
                 .WithReservedBits(3, 2)
@@ -220,21 +243,24 @@ namespace Antmicro.Renode.Peripherals.Analog
 
         private IFlagRegisterField poweredDown;
         private IEnumRegisterField<AdcState> state;
-      
+
         private readonly ADCChannel[] precisionChannels;
         private readonly ADCChannel[] standardChannels;
         // TODO support external channels
+
         private readonly RESDStream<VoltageSample>[] resdStream;
+        private readonly PseudorandomNumberGenerator rng;
 
         // TODO only precision channels, mV
         private uint[] rawVoltage;
+        private uint[] rngNoise;
 
         // TODO this gives each ADC the same number of channels, when in reality
         // this is just what ADC0/1 have
         public const int NumberOfPrecisionChannels = 8;
         public const int NumberOfStandardChannels = 16;
         //public const int NumberOfExternalChannels = 32;
-            
+
         private const uint VoltageSampleDivisor = 1000; // uV to mV
         private const uint MaxVoltage = 3300; // mV
         private const uint MaxValue = 0x3FFF; // Saturated 14 resolution
