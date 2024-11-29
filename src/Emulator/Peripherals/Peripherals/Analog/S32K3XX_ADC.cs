@@ -13,12 +13,14 @@ using Antmicro.Renode.Core;
 using Antmicro.Renode.Core.Structure.Registers;
 using Antmicro.Renode.Exceptions;
 using Antmicro.Renode.Logging;
-using Antmicro.Renode.Utilities;
 using Antmicro.Renode.Time;
 using Antmicro.Renode.Peripherals.Bus;
 using Antmicro.Renode.Peripherals.Timers;
+using Antmicro.Renode.Utilities;
+using Antmicro.Renode.Utilities.RESD;
 
-// NOTE: this is currently just mocked out
+// NOTE: this is currently just mocked out (mostly)
+// precision channels are wired up to a RESD stream
 namespace Antmicro.Renode.Peripherals.Analog
 {
     public class S32K3XX_ADC : BasicDoubleWordPeripheral, IKnownSize
@@ -27,6 +29,9 @@ namespace Antmicro.Renode.Peripherals.Analog
         {
             precisionChannels = Enumerable.Range(0, NumberOfPrecisionChannels).Select(x => new ADCChannel(this, x)).ToArray();
             standardChannels = Enumerable.Range(0, NumberOfStandardChannels).Select(x => new ADCChannel(this, x)).ToArray();
+            // TODO only the precision channels are supported in the resd streams
+            resdStream = new RESDStream<VoltageSample>[NumberOfPrecisionChannels];
+            rawVoltage = Enumerable.Repeat(DefaultChannelVoltage, NumberOfPrecisionChannels).ToArray();
 
             DefineRegisters();
         }
@@ -42,12 +47,86 @@ namespace Antmicro.Renode.Peripherals.Analog
             {
                 c.Reset();
             }
+            IRQ.Unset();
+        }
+
+        public void FeedSamplesFromRESD(ReadFilePath filePath, uint adcChannel, uint resdChannel = 0,
+            RESDStreamSampleOffset sampleOffsetType = RESDStreamSampleOffset.CurrentVirtualTime, long sampleOffsetTime = 0)
+        {
+            EnsureChannelIsValid(adcChannel);
+            try
+            {
+                this.DebugLog("Loading RESD ADC channel {0} RESD channel {1}", adcChannel, resdChannel);
+                resdStream[adcChannel] = this.CreateRESDStream<VoltageSample>(filePath, resdChannel, sampleOffsetType, sampleOffsetTime);
+            }
+            catch(RESDException)
+            {
+                for(var channelId = 0; channelId < NumberOfPrecisionChannels; channelId++)
+                {
+                    resdStream[channelId]?.Dispose();
+                }
+                throw new RecoverableException($"Could not load RESD channel {resdChannel} from {filePath}");
+            }
+        }
+
+        public void SetADCValue(int adcChannel, uint microvolts)
+        {
+            EnsureChannelIsValid((uint)adcChannel);
+            rawVoltage[adcChannel] = microvolts / VoltageSampleDivisor;
+        }
+
+        public uint GetADCValue(int adcChannel)
+        {
+            EnsureChannelIsValid((uint)adcChannel);
+            return rawVoltage[adcChannel] * VoltageSampleDivisor;
         }
 
         public long Size => 0x400;
 
         public GPIO IRQ { get; } = new GPIO();
         public GPIO DMARequest { get; } = new GPIO();
+
+        private void EnsureChannelIsValid(uint channelIdx)
+        {
+            if(channelIdx >= NumberOfPrecisionChannels)
+            {
+                throw new RecoverableException($"Invalid argument value: {channelIdx}. This peripheral implements only precision channels in range 0-{NumberOfPrecisionChannels - 1}");
+            }
+        }
+
+        private uint GetChannelVoltage(uint channelId)
+        {
+            EnsureChannelIsValid(channelId);
+            if(resdStream[channelId] == null || resdStream[channelId].TryGetCurrentSample(this, (sample) => sample.Voltage / VoltageSampleDivisor, out var voltage, out _) != RESDStreamStatus.OK)
+            {
+                voltage = rawVoltage[channelId];
+            }
+            else
+            {
+                rawVoltage[channelId] = voltage;
+            }
+
+            if(voltage > MaxVoltage)
+            {
+                this.Log(LogLevel.Warning, "The maximum allowed input voltage is {0}mV. Provided value: {1}mV", MaxVoltage, voltage);
+                return MaxVoltage;
+            }
+
+            return voltage;
+        }
+
+        private uint GetRightAlignedValue(uint millivolts)
+        {
+            var adcValue = (uint)(millivolts * MaxValue / MaxVoltage);
+            //this.Log(LogLevel.Debug, "mV={0} ADC={1} CRD=0x{2:X}", millivolts, adcValue, (adcValue << ResolutionShift) & ResolutionMask);
+            return (adcValue << ResolutionShift) & ResolutionMask;
+        }
+
+        private void StartConversion()
+        {
+            this.Log(LogLevel.Warning, "StartConversion");
+            // TODO add a conversion timer, do the HandleConversion on conversion finished
+        }
 
         private void DefineRegisters()
         {
@@ -116,7 +195,7 @@ namespace Antmicro.Renode.Peripherals.Analog
                 var offset = index * 4;
                 (Registers.PrecisionConversionData0 + offset).Define(this)
                     .WithValueField(0, 16, FieldMode.Read,
-                            valueProviderCallback: _ => precisionChannels[index].GetSample(),
+                            valueProviderCallback: _ => GetRightAlignedValue(GetChannelVoltage((uint) index)),
                             name: $"CDATA (PCDR{index})")
                     .WithTag($"RESULT (PCDR{index})", 16, 2)
                     .WithTaggedFlag($"OVERW (PCDR{index})", 18)
@@ -130,7 +209,7 @@ namespace Antmicro.Renode.Peripherals.Analog
                 var offset = index * 4;
                 (Registers.StandardConversionData0 + offset).Define(this)
                     .WithValueField(0, 16, FieldMode.Read,
-                            valueProviderCallback: _ => standardChannels[index].GetSample(),
+                            valueProviderCallback: _ => (standardChannels[index].GetSample() << ResolutionShift) & ResolutionMask,
                             name: $"CDATA (ICDR{index})")
                     .WithTag($"RESULT (ICDR{index})", 16, 2)
                     .WithTaggedFlag($"OVERW (ICDR{index})", 18)
@@ -139,23 +218,29 @@ namespace Antmicro.Renode.Peripherals.Analog
             }
         }
 
-        private void StartConversion()
-        {
-            // TODO
-        }
-
         private IFlagRegisterField poweredDown;
         private IEnumRegisterField<AdcState> state;
       
         private readonly ADCChannel[] precisionChannels;
         private readonly ADCChannel[] standardChannels;
         // TODO support external channels
+        private readonly RESDStream<VoltageSample>[] resdStream;
+
+        // TODO only precision channels, mV
+        private uint[] rawVoltage;
 
         // TODO this gives each ADC the same number of channels, when in reality
         // this is just what ADC0/1 have
         public const int NumberOfPrecisionChannels = 8;
         public const int NumberOfStandardChannels = 16;
         //public const int NumberOfExternalChannels = 32;
+            
+        private const uint VoltageSampleDivisor = 1000; // uV to mV
+        private const uint MaxVoltage = 3300; // mV
+        private const uint MaxValue = 0x3FFF; // Saturated 14 resolution
+        private const uint ResolutionMask = 0x7FFE;
+        private const int ResolutionShift = 1;
+        private const uint DefaultChannelVoltage = 0;
 
         private enum AdcState
         {
