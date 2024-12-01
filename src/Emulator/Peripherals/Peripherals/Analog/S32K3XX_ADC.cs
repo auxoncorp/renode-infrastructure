@@ -32,7 +32,7 @@ namespace Antmicro.Renode.Peripherals.Analog
 
             // TODO only the precision channels are supported in the resd streams
             resdStream = new RESDStream<VoltageSample>[NumberOfPrecisionChannels];
-            rawVoltage = Enumerable.Repeat(DefaultChannelVoltage, NumberOfPrecisionChannels).ToArray();
+            rawVoltage = Enumerable.Repeat(defaultChannelVoltage, NumberOfPrecisionChannels).ToArray();
 
             rng = EmulationManager.Instance.CurrentEmulation.RandomGenerator;
             rngNoise = Enumerable.Repeat((uint) 0, NumberOfPrecisionChannels).ToArray();
@@ -50,6 +50,10 @@ namespace Antmicro.Renode.Peripherals.Analog
             foreach(var c in standardChannels)
             {
                 c.Reset();
+            }
+            for(var channelId = 0; channelId < NumberOfPrecisionChannels; channelId++)
+            {
+                rawVoltage[channelId] = defaultChannelVoltage;
             }
             IRQ.Unset();
         }
@@ -97,10 +101,27 @@ namespace Antmicro.Renode.Peripherals.Analog
             rngNoise[adcChannel] = 0;
         }
 
+        public void SetToDefault(int adcChannel)
+        {
+            EnsureChannelIsValid((uint)adcChannel);
+            rawVoltage[adcChannel] = defaultChannelVoltage;
+        }
+
         public long Size => 0x400;
 
         public GPIO IRQ { get; } = new GPIO();
         public GPIO DMARequest { get; } = new GPIO();
+
+        // uV
+        public uint DefaultChannelVoltage
+        {
+            get => (defaultChannelVoltage * VoltageSampleDivisor);
+            set
+            {
+                var millivolts = value / VoltageSampleDivisor;
+                defaultChannelVoltage = millivolts.Clamp((uint) 0, MaxVoltage);
+            }
+        }
 
         private void EnsureChannelIsValid(uint channelIdx)
         {
@@ -255,6 +276,9 @@ namespace Antmicro.Renode.Peripherals.Analog
         private uint[] rawVoltage;
         private uint[] rngNoise;
 
+        // mV
+        private uint defaultChannelVoltage = 0;
+
         // TODO this gives each ADC the same number of channels, when in reality
         // this is just what ADC0/1 have
         public const int NumberOfPrecisionChannels = 8;
@@ -266,7 +290,6 @@ namespace Antmicro.Renode.Peripherals.Analog
         private const uint MaxValue = 0x3FFF; // Saturated 14 resolution
         private const uint ResolutionMask = 0x7FFE;
         private const int ResolutionShift = 1;
-        private const uint DefaultChannelVoltage = 0;
 
         private enum AdcState
         {
