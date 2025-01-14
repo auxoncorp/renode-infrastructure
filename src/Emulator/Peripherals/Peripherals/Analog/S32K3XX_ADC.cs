@@ -168,7 +168,6 @@ namespace Antmicro.Renode.Peripherals.Analog
 
         private void StartConversion()
         {
-            this.Log(LogLevel.Warning, "StartConversion");
             // TODO add a conversion timer, do the HandleConversion on conversion finished
         }
 
