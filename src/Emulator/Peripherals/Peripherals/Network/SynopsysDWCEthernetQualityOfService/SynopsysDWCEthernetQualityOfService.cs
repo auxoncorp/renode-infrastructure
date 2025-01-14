@@ -105,6 +105,8 @@ namespace Antmicro.Renode.Peripherals.Network
         public GPIO IRQ { get; }
         public MACAddress MAC { get; set; }
 
+        public bool IgnoreChecksumOffload { get; set; }
+
         public event Action<EthernetFrame> FrameReady;
 
         // Configuration options for derived classes

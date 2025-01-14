@@ -719,7 +719,7 @@ namespace Antmicro.Renode.Peripherals.Network
                                     buffer,
                                     (uint)maximumSegmentSize.Value,
                                     latestTxContext,
-                                    parent.checksumOffloadEnable.Value,
+                                    parent.IgnoreChecksumOffload ? false : parent.checksumOffloadEnable.Value,
                                     parent.SendFrame
                                 );
                                 buffer = structure.FetchBuffer2OrBuffer1(parent.Bus, parent.CpuContext);
@@ -730,7 +730,7 @@ namespace Antmicro.Renode.Peripherals.Network
                                 frameAssembler = new FrameAssembler(
                                     parent,
                                     structure.crcPadControl,
-                                    parent.checksumOffloadEnable.Value ? structure.checksumControl : ChecksumOperation.None,
+                                    (!parent.IgnoreChecksumOffload && parent.checksumOffloadEnable.Value) ? structure.checksumControl : ChecksumOperation.None,
                                     parent.SendFrame
                                 );
                             }
