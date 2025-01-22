@@ -208,7 +208,7 @@ namespace Antmicro.Renode.Peripherals.SPI
 
             Registers.InterruptEnable.Define(this)
                 // Transmit Data Flag is always set so the Transmit Interrupt is never triggered.
-                .WithFlag(0, name: "TDIE - Transmit Data Interrupt Enable")
+                .WithFlag(0, out transmitDataInterruptEnable, name: "TDIE - Transmit Data Interrupt Enable")
                 .WithFlag(1, out receiveDataInterruptEnable, name: "RDIE - Receive Data Interrupt Enable")
                 .WithReservedBits(2, 6)
                 .WithTaggedFlag("WCIE - Word Complete Interrupt Enable", 8)
@@ -427,6 +427,7 @@ namespace Antmicro.Renode.Peripherals.SPI
 
             flag |= receiveDataInterruptEnable.Value && receiveFifo.Count > (int)rxWatermark.Value;
             flag |= transferComplete.Value && transferCompleteInterruptEnable.Value;
+            flag |= transmitDataInterruptEnable.Value;
             flag |= dataMatch.Value | dataMatchInterruptEnable.Value;
 
             this.Log(LogLevel.Debug, "Setting IRQ flag to {0}", flag);
@@ -559,6 +560,7 @@ namespace Antmicro.Renode.Peripherals.SPI
 
         private IFlagRegisterField receiveDataInterruptEnable;
         private IFlagRegisterField transferCompleteInterruptEnable;
+        private IFlagRegisterField transmitDataInterruptEnable;
         private IFlagRegisterField dataMatchInterruptEnable;
 
         private bool continuousTransferInProgress;
