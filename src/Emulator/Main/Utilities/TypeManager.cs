@@ -109,6 +109,7 @@ namespace Antmicro.Renode.Utilities
                 ClearExtensionMethodsCache();
                 BuildAssemblyCache();
                 ScanInner(path, recursive);
+                ScanLoadPathInner(recursive);
                 assemblyFromAssemblyPath = null;
                 stopwatch.Stop();
                 Logger.LogAs(this, LogLevel.Noisy, "Scanning took {0}s, there are now {1} types in dictionaries.", Misc.NormalizeDecimal(stopwatch.Elapsed.TotalSeconds),
@@ -282,6 +283,39 @@ namespace Antmicro.Renode.Utilities
                 foreach(var subdir in Directory.GetDirectories(path))
                 {
                     ScanInner(subdir, recursive);
+                }
+            }
+        }
+
+        private void ScanLoadPathInner(bool recursive)
+        {
+            var path = Environment.GetEnvironmentVariable("RENODE_LOAD_PATH");
+            if (path == null)
+            {
+                return;
+            }
+
+            string[] pathSegs;
+            if (OperatingSystem.IsWindows())
+            {
+                pathSegs = path.Split(";");
+            }
+            else
+            {
+                pathSegs = path.Split(":");
+            }
+
+            foreach (var pathEntry in pathSegs)
+            {
+                Logger.LogAs(this, LogLevel.Debug, "Scanning entry from RENODE_LOAD_PATH: {0}", pathEntry);
+                var attrs = File.GetAttributes(pathEntry);
+                if ((attrs & FileAttributes.Directory) == FileAttributes.Directory)
+                {
+                    ScanInner(pathEntry, recursive);
+                }
+                else
+                {
+                    AnalyzeAssembly(pathEntry, throwOnBadImage: false);
                 }
             }
         }
