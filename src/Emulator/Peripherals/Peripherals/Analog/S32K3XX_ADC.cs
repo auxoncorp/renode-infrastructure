@@ -215,6 +215,7 @@ namespace Antmicro.Renode.Peripherals.Analog
                 .WithTaggedFlag("WLSIDE", 30)
                 .WithTaggedFlag("OWREN", 31);
 
+            // NOTE: W1C
             Registers.MainStatus.Define(this, 0x00000001, name: "MSR")
                 .WithEnumField<DoubleWordRegister, AdcState>(0, 3, out state, FieldMode.Read, name: "ADCSTATUS")
                 .WithReservedBits(3, 2)
@@ -231,6 +232,49 @@ namespace Antmicro.Renode.Peripherals.Analog
                 .WithTaggedFlag("NSTART", 24)
                 .WithReservedBits(25, 6)
                 .WithTaggedFlag("CALIBRTD", 31);
+
+            // NOTE: W1C
+            Registers.ChannelEndConversionPrecision.Define(this, name: "CEOCFR0")
+                .WithTaggedFlag("PIEOCF0", 0)
+                .WithTaggedFlag("PIEOCF1", 1)
+                .WithTaggedFlag("PIEOCF2", 2)
+                .WithTaggedFlag("PIEOCF3", 3)
+                .WithTaggedFlag("PIEOCF4", 4)
+                .WithTaggedFlag("PIEOCF5", 5)
+                .WithTaggedFlag("PIEOCF6", 6)
+                .WithTaggedFlag("PIEOCF7", 7)
+                .WithReservedBits(8, 24);
+
+            // NOTE: W1C
+            Registers.ChannelEndConversionStandard.Define(this, name: "CEOCFR1")
+                .WithTaggedFlag("SIEOCF0", 0)
+                .WithTaggedFlag("SIEOCF1", 1)
+                .WithTaggedFlag("SIEOCF2", 2)
+                .WithTaggedFlag("SIEOCF3", 3)
+                .WithTaggedFlag("SIEOCF4", 4)
+                .WithTaggedFlag("SIEOCF5", 5)
+                .WithTaggedFlag("SIEOCF6", 6)
+                .WithTaggedFlag("SIEOCF7", 7)
+                .WithTaggedFlag("SIEOCF8", 8)
+                .WithTaggedFlag("SIEOCF9", 9)
+                .WithTaggedFlag("SIEOCF10", 10)
+                .WithTaggedFlag("SIEOCF11", 11)
+                .WithTaggedFlag("SIEOCF12", 12)
+                .WithTaggedFlag("SIEOCF13", 13)
+                .WithTaggedFlag("SIEOCF14", 14)
+                .WithTaggedFlag("SIEOCF15", 15)
+                .WithTaggedFlag("SIEOCF16", 16)
+                .WithTaggedFlag("SIEOCF17", 17)
+                .WithTaggedFlag("SIEOCF18", 18)
+                .WithTaggedFlag("SIEOCF19", 19)
+                .WithTaggedFlag("SIEOCF20", 20)
+                .WithTaggedFlag("SIEOCF21", 21)
+                .WithTaggedFlag("SIEOCF22", 22)
+                .WithTaggedFlag("SIEOCF23", 23)
+                .WithReservedBits(24, 8);
+
+            Registers.ChannelEndConversionExternal.Define(this, name: "CEOCFR2")
+                .WithTag("EIEOCFn", 0, 32);
 
             foreach (var index in Enumerable.Range(0, NumberOfPrecisionChannels))
             {
@@ -259,6 +303,20 @@ namespace Antmicro.Renode.Peripherals.Analog
                     .WithFlag(19, FieldMode.Read, valueProviderCallback: _ => true, name: $"VALID (ICDR{index})")
                     .WithReservedBits(20, 12);
             }
+
+            Registers.ControlAndCalibrationStatus.Define(this, 0, name: "CALBISTREG")
+                .WithTaggedFlag("TEST_EN", 0)
+                .WithReservedBits(1, 2)
+                .WithTaggedFlag("TEST_FAIL", 3)
+                .WithTaggedFlag("AVG_EN", 4)
+                .WithTag("NR_SMPL", 5, 2)
+                .WithReservedBits(7, 1)
+                .WithReservedBits(8, 6)
+                .WithTaggedFlag("CALSTFUL", 14)
+                .WithTaggedFlag("C_T_BUSY", 15)
+                .WithReservedBits(16, 11)
+                .WithTag("TSAMP", 27, 2)
+                .WithTag("RESN", 29, 3);
         }
 
         private IFlagRegisterField poweredDown;
@@ -302,10 +360,14 @@ namespace Antmicro.Renode.Peripherals.Analog
 
         private enum Registers
         {
-            MainConfiguration = 0x00,           // MCR
-            MainStatus = 0x04,                  // MSR
-            PrecisionConversionData0 = 0x100,   // PCDR0
-            StandardConversionData0 = 0x180,    // ICDR0
+            MainConfiguration = 0x00,               // MCR
+            MainStatus = 0x04,                      // MSR
+            ChannelEndConversionPrecision = 0x14,   // CEOCFR0
+            ChannelEndConversionStandard = 0x18,    // CEOCFR1
+            ChannelEndConversionExternal = 0x1C,    // CEOCFR2
+            PrecisionConversionData0 = 0x100,       // PCDR0
+            StandardConversionData0 = 0x180,        // ICDR0
+            ControlAndCalibrationStatus = 0x3A0,    // CALBISTREG
         }
     }
 }
