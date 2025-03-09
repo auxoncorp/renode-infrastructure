@@ -152,7 +152,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 )
                 .WithReservedBits(1, 30)
                 .WithFlag(31, name: "WFI (WaitForInterruptStatus)",
-                    valueProviderCallback: (_) => cores[index]?.IsHalted ?? false
+                    valueProviderCallback: (_) => cores[index]?.IsHalted ?? true
                 )
             );
 
