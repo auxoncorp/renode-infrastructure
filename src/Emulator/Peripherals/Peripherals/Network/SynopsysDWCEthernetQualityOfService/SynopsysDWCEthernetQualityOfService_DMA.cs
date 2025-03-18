@@ -180,7 +180,7 @@ namespace Antmicro.Renode.Peripherals.Network
                                 rxFinishedRing &= !clearRxFinishedRing;
                                 StartRx();
                             }
-                            this.Log(LogLevel.Debug, "Receive Tail register (DMACRxDTPR.RDT) set to: 0x{0:X}", txDescriptorRingTail.Value);
+                            this.Log(LogLevel.Debug, "Receive Tail register (DMACRxDTPR.RDT) set to: 0x{0:X}", rxDescriptorRingTail.Value);
                         }, name: "DMACRxDTPR.RDT (Receive Descriptor Tail Pointer)")
                     },
                     {(long)RegistersDMAChannel.TxDescriptorRingLength + offset, new DoubleWordRegister(parent)
@@ -271,14 +271,19 @@ namespace Antmicro.Renode.Peripherals.Network
                 if(rxQueueLength + frame.Length > parent.RxQueueSize)
                 {
                     parent.IncrementPacketCounter(parent.rxFifoPacketCounter, parent.rxFifoPacketCounterInterrupt);
-                    this.Log(LogLevel.Debug, "Receive: Dropping overflow frame {0}", frame);
+                    this.Log(LogLevel.Warning, "Receive: Dropping overflow frame {0}", frame);
+                    // It's possible StartRx will not update thes
                     parent.UpdateInterrupts();
-                    return;
+                }
+                else
+                {
+                    this.Log(LogLevel.Debug, "Receive: Incoming frame {0}", frame);
+                    incomingFrames.Enqueue(frame);
+                    rxQueueLength += frame.Bytes.Length;
                 }
 
-                this.Log(LogLevel.Debug, "Receive: Incoming frame {0}", frame);
-                incomingFrames.Enqueue(frame);
-                rxQueueLength += frame.Bytes.Length;
+                // Need to service the descriptors regardless to see if any
+                // have been released back to the DMA engine
                 StartRx();
             }
 
