@@ -189,6 +189,22 @@ namespace Antmicro.Renode.Tools.Network
         public event Action<IExternal, IMACInterface, IMACInterface, byte[]> FrameTransmitted;
         public event Action<IExternal, IMACInterface, byte[]> FrameProcessed;
 
+        private IEnumerable<InterfaceDescriptor> InterestingInterfaces(EthernetFrame frame, IMACInterface sender)
+        {
+            if (frame.DestinationMAC.IsBroadcast)
+            {
+                return ifaces.Where(x => x.Interface != sender);
+            }
+
+            var destKnown = macMapping.TryGetValue(frame.DestinationMAC, out var destIface);
+            if (!destKnown && broadcastUnknown)
+            {
+                return ifaces.Where(x => x.Interface != sender);
+            }
+
+            return ifaces.Where(x => (x.PromiscuousMode && x.Interface != sender) || x.Interface == destIface);
+        }
+
         private void ForwardToReceiver(EthernetFrame frame, IMACInterface sender)
         {
             this.Log(LogLevel.Noisy, "Received frame from interface {0}", sender.MAC);
@@ -201,9 +217,7 @@ namespace Antmicro.Renode.Tools.Network
             }
             lock(innerLock)
             {
-                var interestingIfaces = macMapping.TryGetValue(frame.DestinationMAC, out var destIface)
-                    ? ifaces.Where(x => (x.PromiscuousMode && x.Interface != sender) || x.Interface == destIface)
-                    : ifaces.Where(x => (frame.DestinationMAC.IsBroadcast || broadcastUnknown) && x.Interface != sender);
+                var interestingIfaces = this.InterestingInterfaces(frame, sender);
 
                 if(!TimeDomainsManager.Instance.TryGetVirtualTimeStamp(out var vts))
                 {
