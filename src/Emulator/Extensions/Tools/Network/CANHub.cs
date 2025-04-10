@@ -120,8 +120,30 @@ namespace Antmicro.Renode.Tools.Network
                 }
                 foreach(var iface in attached.Where(x => (x != sender || loopback)))
                 {
-                    iface.GetMachine().HandleTimeDomainEvent(iface.OnFrameReceived, message, vts,
-                        frame != null ? () => FrameTransmitted?.Invoke(this, sender, iface, frame) : (Action)null);
+                    // When SocketCANBridge is created as a host machine element rather
+                    // than a machine peripheral, it has no machine context to use.
+                    // Which is expected.
+                    // Otherwise this supports the legacy machine peripheral variant.
+                    IMachine machine = null;
+                    if(iface is IHostMachineElement hostElement)
+                    {
+                        iface.TryGetMachine(out machine);
+                    }
+                    else
+                    {
+                        // Normal peripherals are required to have a machine context
+                        machine = iface.GetMachine();
+                    }
+
+                    if(machine == null)
+                    {
+                        iface.OnFrameReceived(message);
+                    }
+                    else
+                    {
+                        machine.HandleTimeDomainEvent(iface.OnFrameReceived, message, vts,
+                            frame != null ? () => FrameTransmitted?.Invoke(this, sender, iface, frame) : (Action)null);
+                    }
                 }
             }
         }

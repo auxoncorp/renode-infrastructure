@@ -28,9 +28,15 @@ namespace Antmicro.Renode.Peripherals.CAN
             machine.RegisterAsAChildOf(machine.SystemBus, bridge, NullRegistrationPoint.Instance);
             machine.SetLocalName(bridge, name);
         }
+
+        public static void CreateSocketCANBridge(this Emulation emulation, string name, string canInterfaceName = "vcan0", bool ensureFdFrames = false, bool ensureXlFrames = false)
+        {
+            var bridge = new SocketCANBridge(canInterfaceName, ensureFdFrames, ensureXlFrames);
+            emulation.HostMachine.AddHostMachineElement(bridge, name);
+        }
     }
 
-    public class SocketCANBridge : ICAN
+    public class SocketCANBridge : ICAN, IHostMachineElement, IDisposable
     {
         public SocketCANBridge(string canInterfaceName = "vcan0", bool ensureFdFrames = false, bool ensureXlFrames = false)
         {
@@ -71,6 +77,15 @@ namespace Antmicro.Renode.Peripherals.CAN
             StartTransmitThread();
         }
 
+        public void Dispose()
+        {
+            if(canSocket != -1)
+            {
+                LibCWrapper.Close(canSocket);
+                canSocket = -1;
+            }
+        }
+
         public void Reset()
         {
             // intentionally left empty
@@ -84,10 +99,9 @@ namespace Antmicro.Renode.Peripherals.CAN
             try
             {
                 // TODO for tx, I have to set useNetworkByteOrder=false
+                // I have no idea why this would be true?
                 // https://github.com/renode/renode/issues/641
-                frame = message.ToSocketCAN(false); 
-                //frame = message.ToSocketCAN(true);
-                // TODO why useNetworkByteOrder=true
+                frame = message.ToSocketCAN(false);
             }
             catch(RecoverableException e)
             {
