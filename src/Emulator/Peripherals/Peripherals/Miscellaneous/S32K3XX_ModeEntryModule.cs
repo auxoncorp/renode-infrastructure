@@ -18,6 +18,16 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
 {
     public class S32KXX_ModeEntryModule : BasicDoubleWordPeripheral, IKnownSize
     {
+        // NOTE: core0..=5 are indexed using the hw's scheme
+        // ie for 396:
+        // - core0: cpu0
+        // - core1: cpu1
+        // - core4: cpu2
+        // and for 388:
+        // - core0: cpu0
+        // - core1: cpu1
+        // - core4: cpu2
+        // - core3: cpu3
         public S32KXX_ModeEntryModule(IMachine machine, ICPU core0,
             ICPU core1 = null, ICPU core2 = null, ICPU core3 = null, ICPU core4 = null, ICPU core5 = null)
             : base(machine)
@@ -131,6 +141,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                     .WithTaggedFlag($"CCUPD (Core{index} Clock Update)", 0)
                     .WithReservedBits(1, 31);
             }
+
             Registers.Partition0Core1ProcessConfiguration.Define(this)
                 .WithFlag(0, out core1Enabled, name: "CCE (Core1 Clock Enable)")
                 .WithReservedBits(1, 31);
@@ -138,10 +149,16 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 .WithFlag(0, out core1Trigger, name: "CCUPD (Core1 Clock Update)")
                 .WithReservedBits(1, 31);
             Registers.Partition0Core4ProcessConfiguration.Define(this)
-                .WithFlag(0, out core2Enabled, name: "CCE (Core4 Clock Enable)")
+                .WithFlag(0, out core4Enabled, name: "CCE (Core4 Clock Enable)")
                 .WithReservedBits(1, 31);
             Registers.Partition0Core4ProcessUpdate.Define(this)
-                .WithFlag(0, out core2Trigger, name: "CCUPD (Core4 Clock Update)")
+                .WithFlag(0, out core4Trigger, name: "CCUPD (Core4 Clock Update)")
+                .WithReservedBits(1, 31);
+            Registers.Partition0Core3ProcessConfiguration.Define(this)
+                .WithFlag(0, out core3Enabled, name: "CCE (Core3 Clock Enable)")
+                .WithReservedBits(1, 31);
+            Registers.Partition0Core3ProcessUpdate.Define(this)
+                .WithFlag(0, out core3Trigger, name: "CCUPD (Core3 Clock Update)")
                 .WithReservedBits(1, 31);
 
             // Currently only a single core configuration is supported.
@@ -161,13 +178,13 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 .WithTag("ADDR (Core0 Boot Address)", 2, 30);
             Registers.Partition0Core1Address.Define(this, 0x00410000)
                 .WithReservedBits(0, 2)
-                .WithValueField(2, 30, out core1BootAddr, name: "ADDR (Core1 Boot Address)");
+                .WithTag("ADDR (Core1 Boot Address)", 2, 30);
             Registers.Partition0Core2Address.Define(this, 0x009FFC00)
                 .WithReservedBits(0, 2)
                 .WithTag("ADDR (Core2 Boot Address)", 2, 30);
             Registers.Partition0Core4Address.Define(this, 0x00420000)
                 .WithReservedBits(0, 2)
-                .WithValueField(2, 30, out core1BootAddr, name: "ADDR (Core4 Boot Address)");
+                .WithTag("ADDR (Core4 Boot Address)", 2, 30);
             Registers.Partition0Core5Address.Define(this, 0x00420000)
                 .WithReservedBits(0, 2)
                 .WithTag("ADDR (Core5 Boot Address)", 2, 30);
@@ -228,13 +245,21 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 cores[1].IsHalted = !enabled;
                 core1Trigger.Value = false;
             }
-            
-            if(core2Trigger?.Value ?? false)
+
+            if(core4Trigger?.Value ?? false)
             {
-                var enabled = core2Enabled?.Value ?? false;
-                this.Log(LogLevel.Debug, "{0} core2", enabled ? "Enabling" : "Disabling");
+                var enabled = core4Enabled?.Value ?? false;
+                this.Log(LogLevel.Debug, "{0} core4 (actually core 2)", enabled ? "Enabling" : "Disabling");
                 cores[4].IsHalted = !enabled;
-                core2Trigger.Value = false;
+                core4Trigger.Value = false;
+            }
+
+            if(core3Trigger?.Value ?? false)
+            {
+                var enabled = core3Enabled?.Value ?? false;
+                this.Log(LogLevel.Debug, "{0} core3", enabled ? "Enabling" : "Disabling");
+                cores[3].IsHalted = !enabled;
+                core3Trigger.Value = false;
             }
         }
 
@@ -244,54 +269,54 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
         private IFlagRegisterField destructiveResetRequest;
         private IFlagRegisterField modeUpdatePending;
         private IValueRegisterField controlKey;
-        private IValueRegisterField core1BootAddr;
         private IFlagRegisterField core1Enabled;
         private IFlagRegisterField core1Trigger;
-        private IValueRegisterField core2BootAddr;
-        private IFlagRegisterField core2Enabled;
-        private IFlagRegisterField core2Trigger;
+        private IFlagRegisterField core3Enabled;
+        private IFlagRegisterField core3Trigger;
+        private IFlagRegisterField core4Enabled;
+        private IFlagRegisterField core4Trigger;
         private const uint PartitionCount = 4;
 
         public enum Registers
         {
-            ControlKey = 0x0, // CTL_KEY 
-            ModeConfiguration = 0x4, // MODE_CONF 
-            ModeUpdate = 0x8, // MODE_UPD 
-            ModeStatus = 0xC, // MODE_STAT 
-            MainCoreID = 0x10, // MAIN_COREID 
-            Partition0ProcessConfiguration = 0x100, // PRTN0_PCONF 
-            Partition0ProcessUpdate = 0x104, // PRTN0_PUPD 
-            Partition0Status = 0x108, // PRTN0_STAT 
+            ControlKey = 0x0, // CTL_KEY
+            ModeConfiguration = 0x4, // MODE_CONF
+            ModeUpdate = 0x8, // MODE_UPD
+            ModeStatus = 0xC, // MODE_STAT
+            MainCoreID = 0x10, // MAIN_COREID
+            Partition0ProcessConfiguration = 0x100, // PRTN0_PCONF
+            Partition0ProcessUpdate = 0x104, // PRTN0_PUPD
+            Partition0Status = 0x108, // PRTN0_STAT
             Partition0CoreLockstepControl = 0x10C, // PRTN0_CORE_LOCKSTE
             Partition0COFBSet0ClockStatus = 0x110, // PRTN0_COFB0_STAT
             Partition0COFBSet1ClockStatus = 0x114, // PRTN0_COFB1_STAT
             Partition0COFBSet0ClockEnable = 0x130, // PRTN0_COFB0_CLKE
             Partition0COFBSet1ClockEnable = 0x134, // PRTN0_COFB1_CLKE
             Partition0Core0ProcessConfiguration = 0x140, // PRTN0_CORE0_PCON
-            Partition0Core0ProcessUpdate = 0x144, // PRTN0_CORE0_PUPD 
-            Partition0Core0Status = 0x148, // PRTN0_CORE0_STAT 
-            Partition0Core0Address = 0x14C, // PRTN0_CORE0_ADDR 
+            Partition0Core0ProcessUpdate = 0x144, // PRTN0_CORE0_PUPD
+            Partition0Core0Status = 0x148, // PRTN0_CORE0_STAT
+            Partition0Core0Address = 0x14C, // PRTN0_CORE0_ADDR
             Partition0Core1ProcessConfiguration = 0x160, // PRTN0_CORE1_PCON
-            Partition0Core1ProcessUpdate = 0x164, // PRTN0_CORE1_PUPD 
-            Partition0Core1Status = 0x168, // PRTN0_CORE1_STAT 
-            Partition0Core1Address = 0x16C, // PRTN0_CORE1_ADDR 
-            Partition0Core2Status = 0x188, // PRTN0_CORE2_STAT 
-            Partition0Core2Address = 0x18C, // PRTN0_CORE2_ADDR 
+            Partition0Core1ProcessUpdate = 0x164, // PRTN0_CORE1_PUPD
+            Partition0Core1Status = 0x168, // PRTN0_CORE1_STAT
+            Partition0Core1Address = 0x16C, // PRTN0_CORE1_ADDR
+            Partition0Core2Status = 0x188, // PRTN0_CORE2_STAT
+            Partition0Core2Address = 0x18C, // PRTN0_CORE2_ADDR
             Partition0Core3ProcessConfiguration = 0x1A0, // PRTN0_CORE3_PCON
-            Partition0Core3ProcessUpdate = 0x1A4, // PRTN0_CORE3_PUPD 
-            Partition0Core3Status = 0x1A8, // PRTN0_CORE3_STAT 
-            Partition0Core3Address = 0x1AC, // PRTN0_CORE3_ADDR 
+            Partition0Core3ProcessUpdate = 0x1A4, // PRTN0_CORE3_PUPD
+            Partition0Core3Status = 0x1A8, // PRTN0_CORE3_STAT
+            Partition0Core3Address = 0x1AC, // PRTN0_CORE3_ADDR
             Partition0Core4ProcessConfiguration = 0x1C0, // PRTN0_CORE4_PCON
-            Partition0Core4ProcessUpdate = 0x1C4, // PRTN0_CORE4_PUPD 
-            Partition0Core4Status = 0x1C8, // PRTN0_CORE4_STAT 
-            Partition0Core4Address = 0x1CC, // PRTN0_CORE4_ADDR 
+            Partition0Core4ProcessUpdate = 0x1C4, // PRTN0_CORE4_PUPD
+            Partition0Core4Status = 0x1C8, // PRTN0_CORE4_STAT
+            Partition0Core4Address = 0x1CC, // PRTN0_CORE4_ADDR
             Partition0Core5ProcessConfiguration = 0x1E0, // PRTN0_CORE5_PCON
-            Partition0Core5ProcessUpdate = 0x1E4, // PRTN0_CORE5_PUPD 
-            Partition0Core5Status = 0x1E8, // PRTN0_CORE5_STAT 
-            Partition0Core5Address = 0x1EC, // PRTN0_CORE5_ADDR 
-            Partition1ProcessConfiguration = 0x300, // PRTN1_PCONF 
-            Partition1ProcessUpdate = 0x304, // PRTN1_PUPD 
-            Partition1Status = 0x308, // PRTN1_STAT 
+            Partition0Core5ProcessUpdate = 0x1E4, // PRTN0_CORE5_PUPD
+            Partition0Core5Status = 0x1E8, // PRTN0_CORE5_STAT
+            Partition0Core5Address = 0x1EC, // PRTN0_CORE5_ADDR
+            Partition1ProcessConfiguration = 0x300, // PRTN1_PCONF
+            Partition1ProcessUpdate = 0x304, // PRTN1_PUPD
+            Partition1Status = 0x308, // PRTN1_STAT
             Partition1COFBSet0ClockStatus = 0x310, // PRTN1_COFB0_STAT
             Partition1COFBSet1ClockStatus = 0x314, // PRTN1_COFB1_STAT
             Partition1COFBSet2ClockStatus = 0x318, // PRTN1_COFB2_STAT
@@ -300,18 +325,18 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             Partition1COFBSet1ClockEnable = 0x334, // PRTN1_COFB1_CLKE
             Partition1COFBSet2ClockEnable = 0x338, // PRTN1_COFB2_CLKE
             Partition1COFBSet3ClockEnable = 0x33C, // PRTN1_COFB3_CLKE
-            Partition2ProcessConfiguration = 0x500, // PRTN2_PCONF 
-            Partition2ProcessUpdate = 0x504, // PRTN2_PUPD 
-            Partition2Status = 0x508, // PRTN2_STAT 
+            Partition2ProcessConfiguration = 0x500, // PRTN2_PCONF
+            Partition2ProcessUpdate = 0x504, // PRTN2_PUPD
+            Partition2Status = 0x508, // PRTN2_STAT
             Partition2COFBSet0ClockStatus = 0x510, // PRTN2_COFB0_STAT
             Partition2COFBSet1ClockStatus = 0x514, // PRTN2_COFB1_STAT
             Partition2COFBSet2ClockStatus = 0x518, // PRTN2_COFB2_STAT
             Partition2COFBSet0ClockEnable = 0x530, // PRTN2_COFB0_CLKE
             Partition2COFBSet1ClockEnable = 0x534, // PRTN2_COFB1_CLKE
             Partition2COFBSet2ClockEnable = 0x538, // PRTN2_COFB2_CLKE
-            Partition3ProcessConfiguration = 0x700, // PRTN3_PCONF 
-            Partition3ProcessUpdate = 0x704, // PRTN3_PUPD 
-            Partition3Status = 0x708, // PRTN3_STAT 
+            Partition3ProcessConfiguration = 0x700, // PRTN3_PCONF
+            Partition3ProcessUpdate = 0x704, // PRTN3_PUPD
+            Partition3Status = 0x708, // PRTN3_STAT
             Partition3COFBSet0ClockStatus = 0x710, // PRTN3_COFB0_STAT
             Partition3COFBSet1ClockStatus = 0x714, // PRTN3_COFB1_STAT
             Partition3COFBSet2ClockStatus = 0x718, // PRTN3_COFB2_STAT
