@@ -38,7 +38,7 @@ namespace Antmicro.Renode.Peripherals.CAN
 
             IRQ = new GPIO();
 
-            messageBufferRange = new Range((ulong)Registers.MessageBuffer, numberOfMessageBuffers * 8);
+            messageBufferRange = new Range((ulong)Registers.MessageBuffer, numberOfMessageBuffers * 16);
             messageBuffers = new ArrayMemory((int)messageBufferRange.Size);
             messageBufferInterruptEnable = new IFlagRegisterField[numberOfMessageBuffers];
             messageBufferInterrupt = new IFlagRegisterField[numberOfMessageBuffers];
@@ -87,7 +87,7 @@ namespace Antmicro.Renode.Peripherals.CAN
                 messageBuffers.WriteDoubleWord((long)mbOffset, value);
                 // NOTE: Align offset to size of the message buffer
                 var mbRegion = GetMessageBufferRegionByOffset(mbOffset);
-                mbOffset -= mbOffset % GetMessageBufferSizeByRegion(mbRegion);
+                mbOffset -= mbOffset % (GetMessageBufferSizeByRegion(mbRegion) - 8);
                 TryTransmitFromMessageBuffer(mbOffset);
                 return;
             }
@@ -121,7 +121,7 @@ namespace Antmicro.Renode.Peripherals.CAN
 
                 // NOTE: Align offset to size of the message buffer
                 var mbRegion = GetMessageBufferRegionByOffset(mbOffset);
-                mbOffset -= mbOffset % GetMessageBufferSizeByRegion(mbRegion);
+                mbOffset -= mbOffset % (GetMessageBufferSizeByRegion(mbRegion) - 8);
                 TryTransmitFromMessageBuffer(mbOffset);
                 return;
             }
