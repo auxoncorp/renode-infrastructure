@@ -19,95 +19,57 @@ using Antmicro.Renode.Peripherals.Timers;
 using Antmicro.Renode.Utilities;
 using Antmicro.Renode.Utilities.RESD;
 
-// NOTE: this is currently just mocked out (mostly)
-// precision channels are wired up to a RESD stream
 namespace Antmicro.Renode.Peripherals.Analog
 {
     public class S32K3XX_ADC : BasicDoubleWordPeripheral, IKnownSize
     {
-        public S32K3XX_ADC(IMachine machine) : base(machine)
+        public S32K3XX_ADC(IMachine machine, uint numberOfPrecisionChannels = 8, uint numberOfStandardChannels = 16, uint numberOfExternalChannels = 0, long conversionClockfrequency = 360000000, ulong conversionLimit = 10) : base(machine)
         {
-            precisionChannels = Enumerable.Range(0, NumberOfPrecisionChannels).Select(x => new ADCChannel(this, x)).ToArray();
-            standardChannels = Enumerable.Range(0, NumberOfStandardChannels).Select(x => new ADCChannel(this, x)).ToArray();
+            if(numberOfPrecisionChannels != 8)
+            {
+                throw new ConstructionException($"{nameof(numberOfPrecisionChannels)} parameter should be set to one of the supported values: {{8}}");
+            }
+            if((numberOfStandardChannels != 16) && (numberOfStandardChannels != 4))
+            {
+                throw new ConstructionException($"{nameof(numberOfStandardChannels)} parameter should be set to one of the supported values: {{4, 16}}");
+            }
+            if((numberOfExternalChannels != 0) && (numberOfExternalChannels != 32))
+            {
+                throw new ConstructionException($"{nameof(numberOfExternalChannels)} parameter should be set to one of the supported values: {{0, 32}}");
+            }
 
-            // TODO only the precision channels are supported in the resd streams
-            resdStream = new RESDStream<VoltageSample>[NumberOfPrecisionChannels];
-            rawVoltage = Enumerable.Repeat(defaultChannelVoltage, NumberOfPrecisionChannels).ToArray();
+            this.numberOfPrecisionChannels = numberOfPrecisionChannels;
+            this.numberOfStandardChannels = numberOfStandardChannels;
+            this.numberOfExternalChannels = numberOfExternalChannels;
 
             rng = EmulationManager.Instance.CurrentEmulation.RandomGenerator;
-            rngNoise = Enumerable.Repeat((uint) 0, NumberOfPrecisionChannels).ToArray();
+
+            precisionChannels = Enumerable.Range(0, (int) numberOfPrecisionChannels).Select(ch => new ADCChannelState(this, rng, PrecisionChannelFirst + ch)).ToArray();
+            standardChannels = Enumerable.Range(0, (int) numberOfStandardChannels).Select(ch => new ADCChannelState(this, rng, StandardChannelFirst + ch)).ToArray();
+            externalChannels = Enumerable.Range(0, (int) numberOfExternalChannels).Select(ch => new ADCChannelState(this, rng, ExternalChannelFirst + ch)).ToArray();
+
+
+            endOfChainConversion = new InterruptPair();
+            endOfConversion = new InterruptPair();
+            endOfInjectedChainConversion = new InterruptPair();
+            endOfInjectedConversion = new InterruptPair();
+            endOfBCTUConversion = new InterruptPair();
 
             DefineRegisters();
+
+            conversionTimer = new LimitTimer(
+                    machine.ClockSource, conversionClockfrequency, this, "conversionClock",
+                    limit: conversionLimit,
+                    eventEnabled: true,
+                    direction: Direction.Ascending,
+                    enabled: false,
+                    autoUpdate: false,
+                    workMode: WorkMode.OneShot);
+            conversionTimer.LimitReached += OnConversionFinished;
         }
 
-        public override void Reset()
-        {
-            base.Reset();
-            foreach(var c in precisionChannels)
-            {
-                c.Reset();
-            }
-            foreach(var c in standardChannels)
-            {
-                c.Reset();
-            }
-            for(var channelId = 0; channelId < NumberOfPrecisionChannels; channelId++)
-            {
-                rawVoltage[channelId] = defaultChannelVoltage;
-            }
-            IRQ.Unset();
-        }
-
-        public void FeedSamplesFromRESD(ReadFilePath filePath, uint adcChannel, uint resdChannel = 0,
-            RESDStreamSampleOffset sampleOffsetType = RESDStreamSampleOffset.CurrentVirtualTime, long sampleOffsetTime = 0)
-        {
-            EnsureChannelIsValid(adcChannel);
-            try
-            {
-                this.DebugLog("Loading RESD ADC channel {0} RESD channel {1}", adcChannel, resdChannel);
-                resdStream[adcChannel] = this.CreateRESDStream<VoltageSample>(filePath, resdChannel, sampleOffsetType, sampleOffsetTime);
-            }
-            catch(RESDException)
-            {
-                for(var channelId = 0; channelId < NumberOfPrecisionChannels; channelId++)
-                {
-                    resdStream[channelId]?.Dispose();
-                }
-                throw new RecoverableException($"Could not load RESD channel {resdChannel} from {filePath}");
-            }
-        }
-
-        public void SetADCValue(int adcChannel, uint microvolts)
-        {
-            EnsureChannelIsValid((uint)adcChannel);
-            rawVoltage[adcChannel] = microvolts / VoltageSampleDivisor;
-        }
-
-        public uint GetADCValue(int adcChannel)
-        {
-            EnsureChannelIsValid((uint)adcChannel);
-            return rawVoltage[adcChannel] * VoltageSampleDivisor;
-        }
-
-        public void EnableRandomNoise(int adcChannel, uint microvolts)
-        {
-            EnsureChannelIsValid((uint)adcChannel);
-            rngNoise[adcChannel] = microvolts / VoltageSampleDivisor;
-        }
-
-        public void DisableRandomNoise(int adcChannel)
-        {
-            EnsureChannelIsValid((uint)adcChannel);
-            rngNoise[adcChannel] = 0;
-        }
-
-        public void SetToDefault(int adcChannel)
-        {
-            EnsureChannelIsValid((uint)adcChannel);
-            rawVoltage[adcChannel] = defaultChannelVoltage;
-        }
-
-        public long Size => 0x400;
+        // 16 KB
+        public long Size => 0x4000;
 
         public GPIO IRQ { get; } = new GPIO();
         public GPIO DMARequest { get; } = new GPIO();
@@ -115,60 +77,216 @@ namespace Antmicro.Renode.Peripherals.Analog
         // uV
         public uint DefaultChannelVoltage
         {
-            get => (defaultChannelVoltage * VoltageSampleDivisor);
+            get => (defaultChannelVoltage * ADCChannelState.VoltageSampleDivisor);
             set
             {
-                var millivolts = value / VoltageSampleDivisor;
-                defaultChannelVoltage = millivolts.Clamp((uint) 0, MaxVoltage);
+                var millivolts = value / ADCChannelState.VoltageSampleDivisor;
+                defaultChannelVoltage = millivolts.Clamp((uint) 0, ADCChannelState.MaxVoltage);
             }
         }
 
-        private void EnsureChannelIsValid(uint channelIdx)
+        public override void Reset()
         {
-            if(channelIdx >= NumberOfPrecisionChannels)
+            this.Log(LogLevel.Debug, "Reset");
+            base.Reset();
+            foreach(var c in precisionChannels)
             {
-                throw new RecoverableException($"Invalid argument value: {channelIdx}. This peripheral implements only precision channels in range 0-{NumberOfPrecisionChannels - 1}");
+                c.Reset(defaultChannelVoltage);
+            }
+            foreach(var c in standardChannels)
+            {
+                c.Reset(defaultChannelVoltage);
+            }
+            foreach(var c in externalChannels)
+            {
+                c.Reset(defaultChannelVoltage);
+            }
+            IRQ.Unset();
+        }
+
+        public void DumpState()
+        {
+            foreach(var c in precisionChannels)
+            {
+                this.Log(LogLevel.Debug, "Precision: {0}", c);
+            }
+            foreach(var c in standardChannels)
+            {
+                this.Log(LogLevel.Debug, "Standard: {0}", c);
+            }
+            foreach(var c in externalChannels)
+            {
+                this.Log(LogLevel.Debug, "External: {0}", c);
             }
         }
 
-        private uint GetChannelVoltage(uint channelId)
+        public void SetADCValue(int adcChannel, uint microvolts)
         {
-            EnsureChannelIsValid(channelId);
-            if(resdStream[channelId] == null || resdStream[channelId].TryGetCurrentSample(this, (sample) => sample.Voltage / VoltageSampleDivisor, out var voltage, out _) != RESDStreamStatus.OK)
+            // TODO
+            //ref var ch = ref GetChannelState(adcChannel);
+            //ref var ch = ref 
+            GetChannelState(adcChannel).SetADCValue(microvolts);
+        }
+
+        public uint GetADCValue(int adcChannel)
+        {
+            ref var ch = ref GetChannelState(adcChannel);
+            return ch.GetADCValue();
+        }
+
+        public void EnableRandomNoise(int adcChannel, uint microvolts)
+        {
+            ref var ch = ref GetChannelState(adcChannel);
+            ch.EnableRandomNoise(microvolts);
+        }
+
+        public void DisableRandomNoise(int adcChannel)
+        {
+            ref var ch = ref GetChannelState(adcChannel);
+            ch.DisableRandomNoise();
+        }
+
+        public void SetToDefault(int adcChannel)
+        {
+            ref var ch = ref GetChannelState(adcChannel);
+            ch.SetToDefault(defaultChannelVoltage);
+        }
+
+        // channel => ADCChannelState[index]
+        // 0..=7   => precision 0..=7
+        // 32..=48 => standard  0..=15
+        // 64..=95 => external  0..=31
+        private ref ADCChannelState GetChannelState(int adcChannel)
+        {
+            if((adcChannel >= PrecisionChannelFirst) && (adcChannel <= PrecisionChannelLast))
             {
-                voltage = rawVoltage[channelId];
+                return ref GetPrecisionChannelState(adcChannel - PrecisionChannelFirst);
+            }
+            else if((adcChannel >= StandardChannelFirst) && (adcChannel <= StandardChannelLast))
+            {
+                return ref GetStandardChannelState(adcChannel - StandardChannelFirst);
+            }
+            else if((adcChannel >= ExternalChannelFirst) && (adcChannel <= ExternalChannelLast))
+            {
+                return ref GetExternalChannelState(adcChannel - ExternalChannelFirst);
             }
             else
             {
-                rawVoltage[channelId] = voltage;
+                throw new RecoverableException($"Invalid adcChannel: {adcChannel}.");
             }
+        }
 
-            if(rngNoise[channelId] != 0)
+        private ref ADCChannelState GetPrecisionChannelState(int index)
+        {
+            return ref GetGenericChannelState("precision", precisionChannels, numberOfPrecisionChannels, index);
+        }
+
+        private ref ADCChannelState GetStandardChannelState(int index)
+        {
+            return ref GetGenericChannelState("standard", standardChannels, numberOfStandardChannels, index);
+        }
+
+        private ref ADCChannelState GetExternalChannelState(int index)
+        {
+            return ref GetGenericChannelState("external", externalChannels, numberOfExternalChannels, index);
+        }
+
+        private ref ADCChannelState GetGenericChannelState(string log, ADCChannelState[] channels, uint numChannels, int index)
+        {
+            if(index < numChannels)
             {
-                var noise = rng.Next(-((int) rngNoise[channelId]), (int) rngNoise[channelId]);
-                int new_voltage = ((int) voltage) + noise;
-                voltage = (uint) new_voltage.Clamp(0, (int) MaxVoltage);
+                return ref channels[index];
             }
-
-            if(voltage > MaxVoltage)
+            else
             {
-                this.Log(LogLevel.Warning, "The maximum allowed input voltage is {0}mV. Provided value: {1}mV", MaxVoltage, voltage);
-                return MaxVoltage;
+                throw new RecoverableException($"Invalid {log} ADCChannelState index: {index}.");
             }
-
-            return voltage;
         }
 
         private uint GetRightAlignedValue(uint millivolts)
         {
-            var adcValue = (uint)(millivolts * MaxValue / MaxVoltage);
-            //this.Log(LogLevel.Debug, "mV={0} ADC={1} CRD=0x{2:X}", millivolts, adcValue, (adcValue << ResolutionShift) & ResolutionMask);
-            return (adcValue << ResolutionShift) & ResolutionMask;
+            var adcValue = (uint)(millivolts * ADCChannelState.MaxValue / ADCChannelState.MaxVoltage);
+            //this.Log(LogLevel.Debug, "mV={0} ADC={1} CRD=0x{2:X}", millivolts, adcValue, (adcValue << ADCChannelState.ResolutionShift) & ADCChannelState.ResolutionMask);
+            return (adcValue << ADCChannelState.ResolutionShift) & ADCChannelState.ResolutionMask;
         }
 
         private void StartConversion()
         {
-            // TODO add a conversion timer, do the HandleConversion on conversion finished
+            if(state.Value != AdcState.PowerDown)
+            {
+                if(state.Value != AdcState.Convert)
+                {
+                    this.Log(LogLevel.Noisy, "Starting conversion state={0} mode={1} time={2}", state.Value, normalConversionMode.Value, machine.ElapsedVirtualTime.TimeElapsed);
+                    state.Value = AdcState.Convert;
+                    conversionTimer.Enabled = true;
+                }
+            }
+            else
+            {
+                this.Log(LogLevel.Warning, "Trying to start conversion while ADC is powered down");
+            }
+        }
+
+        private void StopConversion()
+        {
+            if(state.Value != AdcState.PowerDown)
+            {
+                this.Log(LogLevel.Noisy, "Stopping conversion: time={0}", machine.ElapsedVirtualTime.TimeElapsed);
+
+                conversionTimer.Enabled = false;
+
+                if(state.Value == AdcState.Convert)
+                {
+                    state.Value = AdcState.Idle;
+                }
+            }
+        }
+
+        private void OnConversionFinished()
+        {
+            this.Log(LogLevel.Noisy, "OnConversionFinished: time={0}", machine.ElapsedVirtualTime.TimeElapsed);
+
+            state.Value = AdcState.Idle;
+
+            // We mock out the actual channel selection process, so we flip all of the channels to valid
+            foreach(var c in precisionChannels)
+            {
+                c.valid[0].Value = true;
+            }
+            foreach(var c in standardChannels)
+            {
+                c.valid[0].Value = true;
+            }
+            foreach(var c in externalChannels)
+            {
+                c.valid[0].Value = true;
+            }
+
+            // Only support ECH and EOC currently
+            endOfChainConversion.cause.Value = true;
+            endOfConversion.cause.Value = true;
+
+            UpdateInterrupts();
+        }
+
+        private void UpdateInterrupts()
+        {
+            var flag = false;
+
+            flag |= endOfChainConversion.enable.Value && endOfChainConversion.cause.Value;
+            flag |= endOfConversion.enable.Value && endOfConversion.cause.Value;
+            flag |= endOfInjectedChainConversion.enable.Value && endOfInjectedChainConversion.cause.Value;
+            flag |= endOfInjectedConversion.enable.Value && endOfInjectedConversion.cause.Value;
+            flag |= endOfBCTUConversion.enable.Value && endOfBCTUConversion.cause.Value;
+
+            var enable = RegistersCollection.Read((ushort) Registers.InterruptMask);
+            var cause = RegistersCollection.Read((ushort) Registers.InterruptStatus);
+
+            if(flag != IRQ.IsSet)
+            {
+                this.Log(LogLevel.Debug, "Setting IRQ flag to {0} IMR=0x{1:X} ISR=0x{2:X}", flag, enable, cause);
+                IRQ.Set(flag);
+            }
         }
 
         private void DefineRegisters()
@@ -179,11 +297,14 @@ namespace Antmicro.Renode.Peripherals.Analog
                     {
                         if(value)
                         {
+                            StopConversion();
                             state.Value = AdcState.PowerDown;
+                            this.Log(LogLevel.Debug, "Powered down");
                         }
-                        else
+                        else if(state.Value == AdcState.PowerDown)
                         {
                             state.Value = AdcState.Idle;
+                            this.Log(LogLevel.Debug, "Powered on");
                         }
                     },
                     name: "PWDN")
@@ -205,13 +326,32 @@ namespace Antmicro.Renode.Peripherals.Analog
                 .WithReservedBits(23, 1)
                 .WithFlag(24,
                     name: "NSTART",
-                    writeCallback: (_, value) => { if(value) StartConversion(); },
-                    valueProviderCallback: _ => false)
+                    writeCallback: (_, value) =>
+                    {
+                        if(value)
+                        {
+                            StartConversion();
+                        }
+                        else
+                        {
+                            StopConversion();
+                        }
+                    },
+                    valueProviderCallback: _ => {
+                        if(normalConversionMode.Value == NormalConversionMode.Single)
+                        {
+                            return false;
+                        }
+                        else
+                        {
+                            return !poweredDown.Value;
+                        }
+                    })
                 .WithTaggedFlag("XSTRTEN", 25)
                 .WithTaggedFlag("EDGE", 26)
                 .WithTaggedFlag("TRGEN", 27)
                 .WithReservedBits(28, 1)
-                .WithTaggedFlag("MODE", 29)
+                .WithEnumField<DoubleWordRegister, NormalConversionMode>(29, 1, out normalConversionMode, name: "MODE")
                 .WithTaggedFlag("WLSIDE", 30)
                 .WithTaggedFlag("OWREN", 31);
 
@@ -232,6 +372,15 @@ namespace Antmicro.Renode.Peripherals.Analog
                 .WithTaggedFlag("NSTART", 24)
                 .WithReservedBits(25, 6)
                 .WithTaggedFlag("CALIBRTD", 31);
+
+            Registers.InterruptStatus.Define(this, name: "ISR")
+                .WithFlag(0, out endOfChainConversion.cause, FieldMode.WriteOneToClear, name: "ECH")
+                .WithFlag(1, out endOfConversion.cause, FieldMode.WriteOneToClear, name: "EOC")
+                .WithFlag(2, out endOfInjectedChainConversion.cause, FieldMode.WriteOneToClear, name: "JECH")
+                .WithFlag(3, out endOfInjectedConversion.cause, FieldMode.WriteOneToClear, name: "JEOC")
+                .WithFlag(4, out endOfBCTUConversion.cause, FieldMode.WriteOneToClear, name: "EOBCTU")
+                .WithReservedBits(5, 27)
+                .WithWriteCallback((_, __) => { UpdateInterrupts(); });
 
             // NOTE: W1C
             Registers.ChannelEndConversionPrecision.Define(this, name: "CEOCFR0")
@@ -276,33 +425,65 @@ namespace Antmicro.Renode.Peripherals.Analog
             Registers.ChannelEndConversionExternal.Define(this, name: "CEOCFR2")
                 .WithTag("EIEOCFn", 0, 32);
 
-            foreach (var index in Enumerable.Range(0, NumberOfPrecisionChannels))
+            Registers.InterruptMask.Define(this, name: "IMR")
+                .WithFlag(0, out endOfChainConversion.enable, name: "MSKECH")
+                .WithFlag(1, out endOfConversion.enable, name: "MSKEOC")
+                .WithFlag(2, out endOfInjectedChainConversion.enable, name: "MSKJECH")
+                .WithFlag(3, out endOfInjectedConversion.enable, name: "MSKJEOC")
+                .WithFlag(4, out endOfBCTUConversion.enable, name: "MSKEOBCTU")
+                .WithReservedBits(5, 27)
+                .WithWriteCallback((_, __) => { UpdateInterrupts(); });
+
+            foreach (var index in Enumerable.Range(0, (int) numberOfPrecisionChannels))
             {
-                // TODO always valid currently
                 var offset = index * 4;
                 (Registers.PrecisionConversionData0 + offset).Define(this)
                     .WithValueField(0, 16, FieldMode.Read,
-                            valueProviderCallback: _ => GetRightAlignedValue(GetChannelVoltage((uint) index)),
+                            valueProviderCallback: _ => GetRightAlignedValue(GetPrecisionChannelState(index).GetChannelMiilliVolts()),
                             name: $"CDATA (PCDR{index})")
                     .WithTag($"RESULT (PCDR{index})", 16, 2)
                     .WithTaggedFlag($"OVERW (PCDR{index})", 18)
-                    .WithFlag(19, FieldMode.Read, valueProviderCallback: _ => true, name: $"VALID (PCDR{index})")
+                    .WithFlag(19,
+                            out GetPrecisionChannelState(index).valid[0],
+                            FieldMode.ReadToClear,
+                            name: $"VALID (PCDR{index})")
                     .WithReservedBits(20, 12);
             }
 
-            foreach (var index in Enumerable.Range(0, NumberOfStandardChannels))
+            foreach (var index in Enumerable.Range(0, (int) numberOfStandardChannels))
             {
-                // TODO always valid currently
                 var offset = index * 4;
                 (Registers.StandardConversionData0 + offset).Define(this)
                     .WithValueField(0, 16, FieldMode.Read,
-                            valueProviderCallback: _ => (standardChannels[index].GetSample() << ResolutionShift) & ResolutionMask,
+                            valueProviderCallback: _ => GetRightAlignedValue(GetStandardChannelState(index).GetChannelMiilliVolts()),
                             name: $"CDATA (ICDR{index})")
                     .WithTag($"RESULT (ICDR{index})", 16, 2)
                     .WithTaggedFlag($"OVERW (ICDR{index})", 18)
-                    .WithFlag(19, FieldMode.Read, valueProviderCallback: _ => true, name: $"VALID (ICDR{index})")
+                    .WithFlag(19,
+                            out GetStandardChannelState(index).valid[0],
+                            FieldMode.ReadToClear,
+                            name: $"VALID (ICDR{index})")
                     .WithReservedBits(20, 12);
             }
+
+            foreach (var index in Enumerable.Range(0, (int) numberOfExternalChannels))
+            {
+                var offset = index * 4;
+                (Registers.ExternalConversionData0 + offset).Define(this)
+                    .WithValueField(0, 16, FieldMode.Read,
+                            valueProviderCallback: _ => GetRightAlignedValue(GetExternalChannelState(index).GetChannelMiilliVolts()),
+                            name: $"CDATA (ECDR{index})")
+                    .WithTag($"RESULT (ECDR{index})", 16, 2)
+                    .WithTaggedFlag($"OVERW (ECDR{index})", 18)
+                    .WithFlag(19,
+                            out GetExternalChannelState(index).valid[0],
+                            FieldMode.ReadToClear,
+                            name: $"VALID (ECDR{index})")
+                    .WithReservedBits(20, 12);
+            }
+
+            Registers.MiscInOut.Define(this, 0x00000811, name: "AMSIO")
+                .WithReservedBits(0, 32);
 
             Registers.ControlAndCalibrationStatus.Define(this, 0, name: "CALBISTREG")
                 .WithTaggedFlag("TEST_EN", 0)
@@ -321,32 +502,47 @@ namespace Antmicro.Renode.Peripherals.Analog
 
         private IFlagRegisterField poweredDown;
         private IEnumRegisterField<AdcState> state;
+        private IEnumRegisterField<NormalConversionMode> normalConversionMode;
 
-        private readonly ADCChannel[] precisionChannels;
-        private readonly ADCChannel[] standardChannels;
-        // TODO support external channels
+        private InterruptPair endOfChainConversion;
+        private InterruptPair endOfConversion;
+        private InterruptPair endOfInjectedChainConversion;
+        private InterruptPair endOfInjectedConversion;
+        private InterruptPair endOfBCTUConversion;
 
-        private readonly RESDStream<VoltageSample>[] resdStream;
-        private readonly PseudorandomNumberGenerator rng;
+        private uint numberOfPrecisionChannels;
+        private uint numberOfStandardChannels;
+        private uint numberOfExternalChannels;
 
-        // TODO only precision channels, mV
-        private uint[] rawVoltage;
-        private uint[] rngNoise;
+        private readonly ADCChannelState[] precisionChannels;
+        private readonly ADCChannelState[] standardChannels;
+        private readonly ADCChannelState[] externalChannels;
+
+        private readonly LimitTimer conversionTimer;
 
         // mV
         private uint defaultChannelVoltage = 0;
 
-        // TODO this gives each ADC the same number of channels, when in reality
-        // this is just what ADC0/1 have
-        public const int NumberOfPrecisionChannels = 8;
-        public const int NumberOfStandardChannels = 16;
-        //public const int NumberOfExternalChannels = 32;
+        private readonly PseudorandomNumberGenerator rng;
 
-        private const uint VoltageSampleDivisor = 1000; // uV to mV
-        private const uint MaxVoltage = 3300; // mV
-        private const uint MaxValue = 0x3FFF; // Saturated 14 resolution
-        private const uint ResolutionMask = 0x7FFE;
-        private const int ResolutionShift = 1;
+        public const int PrecisionChannelFirst = 0;
+        public const int PrecisionChannelLast = 7;
+        public const int StandardChannelFirst = 32;
+        public const int StandardChannelLast = 47;
+        public const int ExternalChannelFirst = 64;
+        public const int ExternalChannelLast = 95;
+
+        private class InterruptPair
+        {
+            public IFlagRegisterField cause;
+            public IFlagRegisterField enable;
+        }
+
+        private enum NormalConversionMode
+        {
+            Single = 0,
+            Continuous = 1,
+        }
 
         private enum AdcState
         {
@@ -362,12 +558,108 @@ namespace Antmicro.Renode.Peripherals.Analog
         {
             MainConfiguration = 0x00,               // MCR
             MainStatus = 0x04,                      // MSR
+            InterruptStatus = 0x10,                 // ISR
             ChannelEndConversionPrecision = 0x14,   // CEOCFR0
             ChannelEndConversionStandard = 0x18,    // CEOCFR1
             ChannelEndConversionExternal = 0x1C,    // CEOCFR2
+            InterruptMask = 0x20,                   // IMR
             PrecisionConversionData0 = 0x100,       // PCDR0
             StandardConversionData0 = 0x180,        // ICDR0
+            ExternalConversionData0 = 0x200,        // ECDR0
+            MiscInOut = 0x39C,                      // AMSIO
             ControlAndCalibrationStatus = 0x3A0,    // CALBISTREG
+        }
+
+        private struct ADCChannelState
+        {
+            private readonly IPeripheral parent;
+            private readonly PseudorandomNumberGenerator rng;
+
+            // In case we want to debug print something with the channel context
+            public int channelId;
+
+            // NOTE: used with FieldMode.ReadToClear
+            public IFlagRegisterField[] valid; // PCDRn.VALID
+
+            // mV
+            public uint rawVoltage;
+            public uint rngNoise;
+
+            public const uint VoltageSampleDivisor = 1000;  // uV to mV
+            public const uint MaxVoltage = 3300;            // mV
+            public const uint MaxValue = 0x3FFF;            // Saturated 14-bit resolution
+            public const uint ResolutionMask = 0x7FFE;
+            public const int ResolutionShift = 1;
+
+            public ADCChannelState(IPeripheral parent, PseudorandomNumberGenerator rng, int channelId)
+            {
+                this.parent = parent;
+                this.rng = rng;
+                this.channelId = channelId;
+                this.valid = new IFlagRegisterField[1];
+                this.rawVoltage = 0;
+                this.rngNoise = 0;
+            }
+
+            public override string ToString()
+            {
+                return $"Channel = {channelId}, rawVoltage = {rawVoltage}mV, rngNoise = {rngNoise}mV";
+            }
+
+            public void Reset(uint defaultChannelVoltage)
+            {
+                parent.Log(LogLevel.Debug, "Channel {0} reset", channelId);
+                SetToDefault(defaultChannelVoltage);
+                valid[0].Value = false;
+            }
+
+            public void SetToDefault(uint defaultChannelVoltage)
+            {
+                rawVoltage = defaultChannelVoltage;
+                parent.Log(LogLevel.Debug, "Channel {0} set to default {1}mV", channelId, rawVoltage);
+            }
+
+            public void SetADCValue(uint microvolts)
+            {
+                rawVoltage = microvolts / VoltageSampleDivisor;
+                parent.Log(LogLevel.Debug, "Channel {0} set to {1}mV", channelId, rawVoltage);
+            }
+
+            public uint GetADCValue()
+            {
+                return rawVoltage * VoltageSampleDivisor;
+            }
+
+            public void EnableRandomNoise(uint microvolts)
+            {
+                rngNoise = microvolts / VoltageSampleDivisor;
+            }
+
+            public void DisableRandomNoise()
+            {
+                rngNoise = 0;
+            }
+
+            public uint GetChannelMiilliVolts()
+            {
+                uint voltage = rawVoltage;
+
+                if(rngNoise != 0)
+                {
+                    int noiseCfg = (int) rngNoise;
+                    var noise = rng.Next(-noiseCfg, noiseCfg);
+                    int new_voltage = ((int) voltage) + noise;
+                    voltage = (uint) new_voltage.Clamp(0, (int) MaxVoltage);
+                }
+
+                if(voltage > MaxVoltage)
+                {
+                    parent.Log(LogLevel.Warning, "The maximum allowed input voltage is {0}mV. Provided value: {1}mV", MaxVoltage, voltage);
+                    return MaxVoltage;
+                }
+
+                return voltage;
+            }
         }
     }
 }
