@@ -152,7 +152,12 @@ namespace Antmicro.Renode.Peripherals.CAN
                     return false;
                 }
 
-                return (frame.Id & Mask) == (messageBuffer.Id & Mask);
+                // The mask is in register format:
+                // - For standard IDs: bits 18-28 (need to shift right by 18)
+                // - For extended IDs: bits 0-28 (use as-is)
+                var effectiveMask = messageBuffer.idExtendedBit ? (Mask & 0x1FFFFFFF) : ((Mask >> 18) & 0x7FF);
+
+                return (frame.Id & effectiveMask) == (messageBuffer.Id & effectiveMask);
             }
 
             public ulong RawMask { get; }
@@ -190,12 +195,8 @@ namespace Antmicro.Renode.Peripherals.CAN
             {
                 Data = frame.Data;
                 messageBufferCode = RxMessageCode != RxCode.Empty ? (byte)RxMessageBufferCode.Overrun : (byte)RxMessageBufferCode.Full;
-                
-                // TODO
-                // need to manage Overrun/Full/Empty codes
-                //remoteFrame = frame.RemoteFrame;
-                //extendedFrame = frame.ExtendedFormat;
-                //identifierAcceptanceFilterHitIndicator = (ushort)filterIndex;
+
+                // The ID fields ARE overwritten with the received frame's ID
                 if(frame.ExtendedFormat)
                 {
                     extendedId = frame.Id & 0x3FFFF;
@@ -203,6 +204,7 @@ namespace Antmicro.Renode.Peripherals.CAN
                 }
                 else
                 {
+                    extendedId = 0;
                     standardId = frame.Id;
                 }
 
@@ -302,7 +304,7 @@ namespace Antmicro.Renode.Peripherals.CAN
                 }
             }
 
-            // MB is ready for TX when code is set to Data or Remate (same code value)
+            // MB is ready for TX when code is set to Data or Remote (same code value)
             public bool ReadyForTransmission => (TxMessageBufferCode)messageBufferCode == TxMessageBufferCode.Data;
 
             public bool ReadyForReception =>

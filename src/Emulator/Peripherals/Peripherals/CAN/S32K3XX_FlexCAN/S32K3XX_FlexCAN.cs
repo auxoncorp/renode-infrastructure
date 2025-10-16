@@ -87,8 +87,11 @@ namespace Antmicro.Renode.Peripherals.CAN
                 messageBuffers.WriteDoubleWord((long)mbOffset, value);
                 // NOTE: Align offset to size of the message buffer
                 var mbRegion = GetMessageBufferRegionByOffset(mbOffset);
-                mbOffset -= mbOffset % (GetMessageBufferSizeByRegion(mbRegion) - 8);
-                TryTransmitFromMessageBuffer(mbOffset);
+                var mbSize = GetMessageBufferSizeByRegion(mbRegion);
+                var offsetWithinRegion = mbOffset - (ulong)(mbRegion * MessageBufferRegionSize);
+                var alignedOffsetWithinRegion = offsetWithinRegion - (offsetWithinRegion % mbSize);
+                var alignedAbsoluteOffset = (ulong)(mbRegion * MessageBufferRegionSize) + alignedOffsetWithinRegion;
+                TryTransmitFromMessageBuffer(alignedAbsoluteOffset);
                 return;
             }
             RegistersCollection.Write(offset, value);
@@ -121,8 +124,11 @@ namespace Antmicro.Renode.Peripherals.CAN
 
                 // NOTE: Align offset to size of the message buffer
                 var mbRegion = GetMessageBufferRegionByOffset(mbOffset);
-                mbOffset -= mbOffset % (GetMessageBufferSizeByRegion(mbRegion) - 8);
-                TryTransmitFromMessageBuffer(mbOffset);
+                var mbSize = GetMessageBufferSizeByRegion(mbRegion);
+                var offsetWithinRegion = mbOffset - (ulong)(mbRegion * MessageBufferRegionSize);
+                var alignedOffsetWithinRegion = offsetWithinRegion - (offsetWithinRegion % mbSize);
+                var alignedAbsoluteOffset = (ulong)(mbRegion * MessageBufferRegionSize) + alignedOffsetWithinRegion;
+                TryTransmitFromMessageBuffer(alignedAbsoluteOffset);
                 return;
             }
             this.WriteByteNotTranslated(offset, value);
@@ -207,7 +213,7 @@ namespace Antmicro.Renode.Peripherals.CAN
             ;
 
             Registers.RxMessageBuffersGlobalMask.Define(this)
-                .WithTag("Global Mask for RX Message Buffers (RXMGMASK.MG)", 0, 32)
+                .WithValueField(0, 32, out rxMessageBuffersGlobalMask, name: "Global Mask for RX Message Buffers (RXMGMASK.MG)")
             ;
 
             Registers.Receive14Mask.Define(this)
@@ -618,8 +624,29 @@ namespace Antmicro.Renode.Peripherals.CAN
                     .WithFlag(i + fieldStart, out messageBufferInterruptEnable[index], name: $"Buffer MB{index} Mask (IMASK{index / 32}.BUF{index}M)");
 
                 flagRegister
-                    .WithFlag(i + fieldStart, out messageBufferInterrupt[index], FieldMode.WriteOneToClear | FieldMode.Read, name: $"Buffer MB{index} Interrupt (IFLAG{index / 32}.BUF{index}I)");
+                    .WithFlag(i + fieldStart, out messageBufferInterrupt[index], FieldMode.WriteOneToClear | FieldMode.Read,
+                        changeCallback: (oldVal, newVal) => {
+                            // Auto-clear MB when IFLAG transitions from True to False (being cleared by write-1-to-clear)
+                            if(oldVal && !newVal)
+                            {
+                                AutoClearMessageBuffer(index);
+                            }
+                        },
+                        name: $"Buffer MB{index} Interrupt (IFLAG{index / 32}.BUF{index}I)");
             }
+        }
+
+        private void AutoClearMessageBuffer(int mbIndex)
+        {
+            var mbOffset = GetMessageBufferOffsetByIndex(mbIndex);
+
+            // Clear the MB by setting CODE to INACTIVE (0x0)
+            var csOffset = (long)mbOffset;
+            var currentCs = messageBuffers.ReadDoubleWord(csOffset);
+            var clearedCs = currentCs & 0xF0FFFFFF; // Clear CODE field (bits 27-24), keep rest
+            messageBuffers.WriteDoubleWord(csOffset, clearedCs);
+
+            this.Log(LogLevel.Debug, "Auto-cleared MB#{0} (offset=0x{1:X})", mbIndex, mbOffset);
         }
 
         private void SendFrame(CANMessageFrame frame)
@@ -666,17 +693,15 @@ namespace Antmicro.Renode.Peripherals.CAN
 
         private uint GetMessageBufferOffsetByIndex(int messageBufferIndex)
         {
-            var currentRegion = 0U;
             var currentOffset = 0U;
             for(var i = 0; i < MessageBufferRegionsCount; ++i)
             {
                 var currentRegionSize = GetMessageBufferSizeByRegion(i);
-                if(messageBufferIndex * currentRegionSize < MessageBufferRegionSize)
+                if(messageBufferIndex < MessageBufferRegionSize / (int)currentRegionSize)
                 {
                     return currentOffset + (uint)messageBufferIndex * currentRegionSize;
                 }
 
-                currentRegion += 1;
                 currentOffset += currentRegionSize;
                 messageBufferIndex -= MessageBufferRegionSize / (int)currentRegionSize;
             }
@@ -727,8 +752,8 @@ namespace Antmicro.Renode.Peripherals.CAN
         {
             if(!individualMaskingAndQueue.Value)
             {
-                // NOTE: Legacy masking is not currently supported
-                return new MessageBufferMatcher(0);
+                // Use global mask for all RX message buffers
+                return new MessageBufferMatcher(rxMessageBuffersGlobalMask.Value);
             }
 
             return new MessageBufferMatcher(individualMaskBits[index].Value);
@@ -764,7 +789,7 @@ namespace Antmicro.Renode.Peripherals.CAN
 
             if(matchedItem == null)
             {
-                this.Log(LogLevel.Debug, "Did not found matching message buffer for rx frame: {0}", frame);
+                this.Log(LogLevel.Debug, "Did not found matching message buffer for rx frame ID=0x{0:X}", frame.Id);
                 return false;
             }
 
@@ -772,16 +797,9 @@ namespace Antmicro.Renode.Peripherals.CAN
             var messageBufferOffset = matchedItem.Entry.Offset;
             var messageBufferIndex = matchedItem.Index;
 
-            this.Log(LogLevel.Debug, "Frame: {0}", frame);
-            this.Log(LogLevel.Debug, "Found matching message buffer#{0} (offset {1}): {2}", messageBufferIndex, messageBufferOffset, messageBuffer);
-
             messageBuffer.FillReceivedFrame(messageBuffers, messageBufferOffset, frame);
             messageBufferInterrupt[messageBufferIndex].Value = true;
 
-            this.Log(LogLevel.Debug, "AFTER buffer#{0} (offset {1}): {2}", messageBufferIndex, messageBufferOffset, messageBuffer);
-            // TODO this should happen in the 
-            // WithChangeCallback handlers in
-            // RegisterMessageBufferInterruptFlags ?
             UpdateInterrupts();
 
             return true;
@@ -840,8 +858,11 @@ namespace Antmicro.Renode.Peripherals.CAN
 
         private bool TryTransmitFromMessageBuffer(ulong offset)
         {
+            this.Log(LogLevel.Debug, "TryTransmitFromMessageBuffer called for offset 0x{0:X}", offset);
+
             if(Freeze || listenOnly.Value)
             {
+                this.Log(LogLevel.Debug, "Transmission blocked: Freeze={0}, listenOnly={1}", Freeze, listenOnly.Value);
                 return false;
             }
 
@@ -852,6 +873,7 @@ namespace Antmicro.Renode.Peripherals.CAN
 
             if(!messageBuffer.ReadyForTransmission)
             {
+                this.Log(LogLevel.Debug, "Message buffer NOT ready for transmission (code=0x{0:X})", messageBuffer.messageBufferCode);
                 return false;
             }
 
@@ -938,6 +960,7 @@ namespace Antmicro.Renode.Peripherals.CAN
         private IFlagRegisterField lowPowerModeAcknowledge;
         private IFlagRegisterField messageBuffersReceptionPriority;
         private IFlagRegisterField lowestBufferTransmittedFirst;
+        private IValueRegisterField rxMessageBuffersGlobalMask;
 
         // classic CAN rx -> legacy fifo or message buffer
         // CAN FD rx -> message buffer or enhanced fifo
