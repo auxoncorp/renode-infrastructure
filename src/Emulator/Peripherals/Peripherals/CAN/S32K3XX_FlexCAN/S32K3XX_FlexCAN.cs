@@ -37,6 +37,7 @@ namespace Antmicro.Renode.Peripherals.CAN
             this.enhancedRxFifoSize = enhancedRxFifoSize;
 
             IRQ = new GPIO();
+            IRQ_MB32_63 = new GPIO();
 
             messageBufferRange = new Range((ulong)Registers.MessageBuffer, numberOfMessageBuffers * 16);
             messageBuffers = new ArrayMemory((int)messageBufferRange.Size);
@@ -137,6 +138,7 @@ namespace Antmicro.Renode.Peripherals.CAN
         public long Size => 0x3200;
         public event Action<CANMessageFrame> FrameSent;
         public GPIO IRQ { get; }
+        public GPIO IRQ_MB32_63 { get; }
 
         private void SoftReset()
         {
@@ -932,12 +934,24 @@ namespace Antmicro.Renode.Peripherals.CAN
 
         private void UpdateInterrupts()
         {
-            var interrupt = Enumerable.Range(0, (int)numberOfMessageBuffers).Any(i => messageBufferInterrupt[i].Value && messageBufferInterruptEnable[i].Value);
-            if(interrupt != IRQ.IsSet)
+            // Mailboxes 0-31 trigger IRQ
+            var interrupt0_31 = Enumerable.Range(0, Math.Min(32, (int)numberOfMessageBuffers)).Any(i => messageBufferInterrupt[i].Value && messageBufferInterruptEnable[i].Value);
+            if(interrupt0_31 != IRQ.IsSet)
             {
-                this.Log(LogLevel.Debug, "IRQ: {0}", interrupt);
+                this.Log(LogLevel.Debug, "IRQ (MB 0-31): {0}", interrupt0_31);
             }
-            IRQ.Set(interrupt);
+            IRQ.Set(interrupt0_31);
+
+            // Mailboxes 32-63 trigger IRQ_MB32_63
+            if(numberOfMessageBuffers > 32)
+            {
+                var interrupt32_63 = Enumerable.Range(32, Math.Min(32, (int)numberOfMessageBuffers - 32)).Any(i => messageBufferInterrupt[i].Value && messageBufferInterruptEnable[i].Value);
+                if(interrupt32_63 != IRQ_MB32_63.IsSet)
+                {
+                    this.Log(LogLevel.Debug, "IRQ_MB32_63 (MB 32-63): {0}", interrupt32_63);
+                }
+                IRQ_MB32_63.Set(interrupt32_63);
+            }
         }
 
         private uint Control2ResetValue => numberOfMessageBuffers > 64 ? 0x00600000U : 0x00800000U;
