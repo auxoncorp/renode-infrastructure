@@ -30,6 +30,8 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
 
             wordRegisterCollection = new WordRegisterCollection(this);
             DefineRegisters();
+
+            Reset();
         }
 
         public IReadOnlyDictionary<int, IGPIO> Connections { get; private set; }
@@ -49,7 +51,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             base.Reset();
             wordRegisterCollection.Reset();
 
-            Array.Clear(platformIrqRoutingTable, 0, platformIrqRoutingTable.Length);
+            Array.Fill(platformIrqRoutingTable, true);
         }
 
         private void HandleIRQConnect(int sourceNumber, IGPIOReceiver destination, int destinationNumber)
@@ -81,7 +83,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 for(var coreId = 0; coreId < ProcessorCount; coreId++)
                 {
                     var tableIndex = (coreId * InterruptRouterSharedRegisterCount) + number;
-                    if(platformIrqRoutingTable[tableIndex])
+                    if(platformIrqRoutingTable[tableIndex] && (platformIrqDestinations[tableIndex] is PlatformIrqDestination))
                     {
                         this.Log(LogLevel.Debug, "OnGPIO core={0}, tableIdx={1}", coreId, tableIndex);
                         platformIrqDestinations[tableIndex].OnGPIO(value);
@@ -262,7 +264,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
                 .WithReservedBits(0, 2);
 
             IProvidesRegisterCollection<WordRegisterCollection> asWordCollection = this;
-            Registers.InterruptRouterSharedPeripheralRoutingControl0.DefineMany(asWordCollection, InterruptRouterSharedRegisterCount, (reg, index) => reg
+            Registers.InterruptRouterSharedPeripheralRoutingControl0.DefineMany(asWordCollection, InterruptRouterSharedRegisterCount, resetValue: 0xF, name: "IRSPRCn", setup: (reg, index) => reg
                 .WithTaggedFlag("Lock", 15)
                 .WithReservedBits(4, 9)
                 .WithFlag(3,
@@ -323,7 +325,10 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
 
             public void OnGPIO(bool state)
             {
-                receiver.OnGPIO(destinationNo, state);
+                if(receiver != null)
+                {
+                    receiver.OnGPIO(destinationNo, state);
+                }
             }
 
             public readonly IGPIOReceiver receiver;
